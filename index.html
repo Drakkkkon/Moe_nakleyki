@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Мое_наклейки</title>
+  <meta name="description" content="Печать термонаклеек на принтере Xprinter с телефона по USB">
+  <meta name="theme-color" content="#f3efe6" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16140f" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+  <script>
+    // тема до отрисовки, чтобы не мигало
+    try { const t = localStorage.getItem("mn_theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="6" width="28" height="20" rx="5" fill="var(--accent)"/><rect x="7" y="11" width="2" height="10" fill="var(--on-accent)"/><rect x="11" y="11" width="1" height="10" fill="var(--on-accent)"/><rect x="13.5" y="11" width="3" height="10" fill="var(--on-accent)"/><rect x="18" y="11" width="1" height="10" fill="var(--on-accent)"/><rect x="20.5" y="11" width="2" height="10" fill="var(--on-accent)"/><rect x="24" y="11" width="1" height="10" fill="var(--on-accent)"/></svg>
+      <div class="brand-text">
+        <h1>Мое_наклейки</h1>
+        <span class="ver" id="verLabel"></span>
+      </div>
+    </div>
+    <button id="statusChip" class="status" type="button" aria-live="polite">
+      <span class="dot"></span><span id="statusText">Нет принтера</span>
+    </button>
+  </header>
+
+  <main>
+    <!-- ===== Наклейка ===== -->
+    <section id="page-label" class="page active" aria-label="Наклейка">
+      <div class="size-row">
+        <label class="field grow">
+          <span>Размер наклейки</span>
+          <select id="sizePreset"></select>
+        </label>
+        <label class="toggle-mini" title="Рамка по краю наклейки">
+          <input type="checkbox" id="borderToggle"><span>Рамка</span>
+        </label>
+      </div>
+      <div class="custom-size" id="customSize" hidden>
+        <label class="field"><span>Ширина, мм</span><input id="labelW" type="number" inputmode="decimal" min="10" max="120" step="1"></label>
+        <span class="times">×</span>
+        <label class="field"><span>Высота, мм</span><input id="labelH" type="number" inputmode="decimal" min="10" max="300" step="1"></label>
+      </div>
+
+      <div class="stage" id="stage">
+        <div class="paper" id="paper">
+          <canvas id="preview"></canvas>
+          <div id="overlay" class="overlay"></div>
+        </div>
+      </div>
+      <p class="stage-hint" id="stageHint">Нажмите на элемент, чтобы изменить. Тащите пальцем, чтобы передвинуть.</p>
+
+      <div class="add-bar" role="toolbar" aria-label="Добавить на наклейку">
+        <button type="button" data-add="text"><svg viewBox="0 0 24 24"><path d="M5 5h14v3h-2V7h-4v11h2v2H9v-2h2V7H7v1H5z"/></svg><span>Текст</span></button>
+        <button type="button" data-add="image"><svg viewBox="0 0 24 24"><path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm1 2v8.6l3.6-3.6 3 3 4.4-4.4 3 3V7zm4 2.5A1.5 1.5 0 1 1 6 9.5a1.5 1.5 0 0 1 3 0z"/></svg><span>Картинка</span></button>
+        <button type="button" data-add="qr"><svg viewBox="0 0 24 24"><path d="M3 3h8v8H3zm2 2v4h4V5zm8-2h8v8h-8zm2 2v4h4V5zM3 13h8v8H3zm2 2v4h4v-4zm8-2h3v3h-3zm3 3h3v3h-3zm3-3h2v3h-2zm-6 6h3v2h-3zm5 0h3v2h-3zM6 6h2v2H6zm10 0h2v2h-2zM6 16h2v2H6z"/></svg><span>QR-код</span></button>
+        <button type="button" data-add="barcode"><svg viewBox="0 0 24 24"><path d="M3 5h2v14H3zm3 0h1v14H6zm2 0h3v14H8zm4 0h1v14h-1zm2 0h2v14h-2zm3 0h1v14h-1zm2 0h2v14h-2z"/></svg><span>Штрихкод</span></button>
+      </div>
+      <input type="file" id="fileInput" accept="image/*" hidden>
+
+      <div id="props" class="props"></div>
+    </section>
+
+    <!-- ===== Шаблоны ===== -->
+    <section id="page-templates" class="page" aria-label="Шаблоны">
+      <div class="card">
+        <h2>Текущая наклейка</h2>
+        <div class="save-row">
+          <input id="tplName" type="text" placeholder="Название, например «Ценник»" maxlength="40">
+          <button type="button" id="tplSave" class="btn">Сохранить</button>
+        </div>
+        <div class="btn-row">
+          <button type="button" id="newLabel" class="btn ghost">Новая пустая</button>
+          <button type="button" id="downloadPng" class="btn ghost">Скачать картинку</button>
+        </div>
+      </div>
+      <h2 class="section-title">Мои шаблоны</h2>
+      <div id="tplList" class="tpl-list"></div>
+      <h2 class="section-title">Примеры</h2>
+      <div id="exampleList" class="tpl-list"></div>
+    </section>
+
+    <!-- ===== Настройки ===== -->
+    <section id="page-settings" class="page" aria-label="Настройки">
+      <div class="card">
+        <h2>Принтер</h2>
+        <div class="printer-box">
+          <div>
+            <div class="printer-name" id="printerName">Не подключён</div>
+            <div class="muted small" id="printerSub">Подключите принтер кабелем через переходник OTG</div>
+          </div>
+          <button type="button" id="connectBtn" class="btn">Подключить</button>
+        </div>
+        <div class="btn-row">
+          <button type="button" id="testPrint" class="btn ghost">Тестовая печать</button>
+          <button type="button" id="feedBtn" class="btn ghost">Прогнать наклейку</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Печать</h2>
+        <label class="field">
+          <span>Тип принтера</span>
+          <select id="setLang">
+            <option value="tspl">Для наклеек (TSPL)</option>
+            <option value="escpos">Чековый (ESC/POS)</option>
+          </select>
+          <small class="muted">Для наклеек — XP-365B, XP-420B, XP-470B, XP-236B и похожие. Чековые — XP-58, XP-80.</small>
+        </label>
+        <label class="field">
+          <span>Разрешение принтера</span>
+          <select id="setDpi">
+            <option value="203">203 dpi (почти все Xprinter)</option>
+            <option value="300">300 dpi</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Темнота печати: <b id="densityVal"></b></span>
+          <input id="setDensity" type="range" min="1" max="15" step="1">
+        </label>
+        <div class="tspl-only">
+          <label class="field">
+            <span>Скорость печати</span>
+            <select id="setSpeed">
+              <option value="">Как в принтере</option>
+              <option value="2">2 — медленно, чётче</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5 — быстро</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Промежуток между наклейками, мм</span>
+            <input id="setGap" type="number" inputmode="decimal" min="0" max="20" step="0.5">
+            <small class="muted">Обычно 2 мм. Для сплошной ленты без промежутков — 0.</small>
+          </label>
+        </div>
+        <div class="escpos-only">
+          <label class="field">
+            <span>Ширина бумаги</span>
+            <select id="setPaper">
+              <option value="58">58 мм (печатает 48 мм)</option>
+              <option value="80">80 мм (печатает 72 мм)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Промотка после печати, строк</span>
+            <input id="setFeed" type="number" inputmode="numeric" min="0" max="20" step="1">
+          </label>
+          <label class="switch"><input type="checkbox" id="setCut"><span>Отрезать после печати (если есть нож)</span></label>
+        </div>
+        <div class="two">
+          <label class="field"><span>Сдвиг вправо, мм</span><input id="setOffX" type="number" inputmode="decimal" step="0.5" min="-10" max="10"></label>
+          <label class="field"><span>Сдвиг вниз, мм</span><input id="setOffY" type="number" inputmode="decimal" step="0.5" min="-10" max="10"></label>
+        </div>
+        <label class="switch"><input type="checkbox" id="setRotate"><span>Перевернуть на 180°</span></label>
+        <label class="switch"><input type="checkbox" id="setInvert"><span>Инвертировать цвета (если печатает негативом)</span></label>
+      </div>
+
+      <div class="card">
+        <h2>Вид</h2>
+        <div class="seg" id="themeSeg" role="radiogroup" aria-label="Тема">
+          <button type="button" data-theme="auto">Авто</button>
+          <button type="button" data-theme="light">Светлая</button>
+          <button type="button" data-theme="dark">Тёмная</button>
+        </div>
+      </div>
+
+      <div class="card help">
+        <h2>Инструкции</h2>
+        <details>
+          <summary>Как подключить принтер к телефону</summary>
+          <ol>
+            <li>Купите переходник <b>OTG</b>: с одной стороны штекер как у телефона (обычно USB-C), с другой — обычное гнездо USB. Стоит недорого, продаётся в любом магазине электроники.</li>
+            <li>Включите принтер в розетку и нажмите кнопку питания.</li>
+            <li>Вставьте USB-кабель принтера (тот, что идёт к компьютеру) в переходник, а переходник — в телефон.</li>
+            <li>Откройте этот сайт в <b>Google Chrome</b>. В Samsung Internet, Firefox и Яндекс Браузере печать по USB не работает.</li>
+            <li>Нажмите «Подключить», выберите принтер в списке и разрешите доступ.</li>
+            <li>Чтобы сайт открывался как приложение: меню Chrome <b>⋮</b> → «Добавить на главный экран». После этого в галерее появится «Поделиться → Мое_наклейки» — так можно сразу отправить фото на наклейку.</li>
+          </ol>
+          <p class="muted">На некоторых телефонах (Xiaomi, Realme, OPPO, OnePlus) OTG нужно включить: Настройки → «OTG» или «Дополнительные настройки → OTG».</p>
+        </details>
+        <details>
+          <summary>Если печать не получается</summary>
+          <ul>
+            <li><b>Принтер не появляется в списке</b> — проверьте, что принтер включён, и попробуйте другой переходник OTG. Включите OTG в настройках телефона.</li>
+            <li><b>«Принтер занят»</b> — закройте другие приложения для печати (например, приложение Xprinter), выньте и снова вставьте кабель.</li>
+            <li><b>Ничего не печатает</b> — поменяйте «Тип принтера». Некоторые модели (например, XP-365B) переключаются между режимом наклеек и режимом чеков.</li>
+            <li><b>Печатает со сдвигом или через одну наклейку</b> — проверьте размер наклейки и промежуток, затем сделайте калибровку: у большинства Xprinter при включённом принтере зажмите кнопку FEED на 2–3 секунды, пока не мигнёт лампочка, и отпустите. Принтер прогонит несколько наклеек и запомнит их размер. Точный способ — в инструкции к вашей модели.</li>
+            <li><b>Немного съезжает</b> — подвиньте печать полями «Сдвиг вправо» и «Сдвиг вниз».</li>
+            <li><b>Печатает чёрный прямоугольник или негатив</b> — включите «Инвертировать цвета».</li>
+            <li><b>Печать вверх ногами</b> — включите «Перевернуть на 180°».</li>
+            <li><b>Бледно</b> — увеличьте «Темноту печати» или уменьшите скорость.</li>
+          </ul>
+        </details>
+        <details>
+          <summary>О программе</summary>
+          <p><b>Мое_наклейки</b> <span id="aboutVer"></span> — печать термонаклеек на принтерах Xprinter с телефона по USB.</p>
+          <p class="muted small" id="changelog"></p>
+          <p class="muted small">QR-коды: QRCode for JavaScript © 2009 Kazuhiko Arase (лицензия MIT). «QR Code» — товарный знак DENSO WAVE INCORPORATED.</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <div class="printbar" id="printbar">
+    <div class="copies" aria-label="Количество копий">
+      <button type="button" id="copiesMinus" aria-label="Меньше копий">−</button>
+      <input id="copies" type="number" inputmode="numeric" min="1" max="999" value="1" aria-label="Копий">
+      <button type="button" id="copiesPlus" aria-label="Больше копий">+</button>
+    </div>
+    <button type="button" id="printBtn" class="btn primary big">Печать</button>
+  </div>
+
+  <nav class="tabs" aria-label="Разделы">
+    <button type="button" data-page="label" class="active"><svg viewBox="0 0 24 24"><path d="M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm0 2v10h16V7zm2 2h8v2H6zm0 4h5v2H6z"/></svg><span>Наклейка</span></button>
+    <button type="button" data-page="templates"><svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 1.5V8h4.5zM7 12h10v2H7zm0 4h7v2H7z"/></svg><span>Шаблоны</span></button>
+    <button type="button" data-page="settings"><svg viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zm8.4 2.3-1.7-.3a7 7 0 0 0-.7-1.7l1-1.4-1.6-1.6-1.4 1a7 7 0 0 0-1.7-.7l-.3-1.7h-2.2l-.3 1.7a7 7 0 0 0-1.7.7l-1.4-1-1.6 1.6 1 1.4a7 7 0 0 0-.7 1.7l-1.7.3v2.3l1.7.3c.2.6.4 1.2.7 1.7l-1 1.4 1.6 1.6 1.4-1c.5.3 1.1.6 1.7.7l.3 1.7h2.2l.3-1.7c.6-.2 1.2-.4 1.7-.7l1.4 1 1.6-1.6-1-1.4c.3-.5.6-1.1.7-1.7l1.7-.3z"/></svg><span>Настройки</span></button>
+  </nav>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/qrcode.js"></script>
+  <script src="js/barcode.js"></script>
+  <script src="js/printer.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
