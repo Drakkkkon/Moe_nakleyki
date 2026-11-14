@@ -2,8 +2,8 @@
 (function () {
   "use strict";
 
-  const VERSION = "1.0.0";
-  const CHANGELOG = "1.0.0 — первая версия: печать с телефона по USB (принтеры наклеек TSPL и чековые ESC/POS), текст, картинки, QR-коды, штрихкоды Code 128 и EAN-13, шаблоны и примеры, отправка фото и ссылок через «Поделиться».";
+  const VERSION = "1.1.0";
+  const CHANGELOG = "1.1.0 — общий аккаунт по почте и паролю (Настройки → «Аккаунт»), один на все мои сайты: шаблоны, текущая наклейка и настройки сами переходят между телефоном и компьютером. 1.0.0 — первая версия: печать с телефона по USB (принтеры наклеек TSPL и чековые ESC/POS), текст, картинки, QR-коды, штрихкоды Code 128 и EAN-13, шаблоны и примеры, отправка фото и ссылок через «Поделиться».";
 
   /* ---------- утилиты ---------- */
   const $ = (s, r = document) => r.querySelector(s);
@@ -15,7 +15,7 @@
 
   const store = {
     get(k, def) { try { const v = localStorage.getItem(k); return v == null ? def : JSON.parse(v); } catch (e) { return def; } },
-    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); if (window.MMAccount) window.MMAccount.changed(); return true; } catch (e) { return false; } },
   };
 
   function h(tag, props, ...kids) {

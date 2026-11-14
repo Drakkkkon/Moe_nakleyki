@@ -88,6 +88,12 @@
 
     <!-- ===== Настройки ===== -->
     <section id="page-settings" class="page" aria-label="Настройки">
+      <!-- 1.1.0: общий аккаунт для всех моих сайтов (js/mm-account.js): шаблоны, наклейка и настройки — в облаке -->
+      <div class="card">
+        <h2>Аккаунт</h2>
+        <div id="acctBox"></div>
+      </div>
+
       <div class="card">
         <h2>Принтер</h2>
         <div class="printer-box">
@@ -231,5 +237,12 @@
   <script src="js/printer.js"></script>
   <script src="js/render.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/mm-account.js"></script>
+  <script>
+    /* Общий аккаунт: шаблоны (mn_templates), текущая наклейка (mn_design), настройки печати (mn_settings) и тема (mn_theme) */
+    MMAccount.setup({ app: "nakleyki", title: "Мое_наклейки", mount: "#acctBox",
+      ls: ["mn_templates", "mn_design", "mn_settings", "mn_theme"],
+      note: "Подключение к принтеру у каждого телефона своё." });
+  </script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 /* Мое_наклейки — работа без интернета и приём «Поделиться» */
-const CACHE = "mn-1.0.0";
+const CACHE = "mn-1.1.0";
 const ASSETS = [
   "./",
   "index.html",
@@ -9,6 +9,7 @@ const ASSETS = [
   "js/printer.js",
   "js/render.js",
   "js/app.js",
+  "js/mm-account.js",
   "manifest.webmanifest",
   "icons/icon-192.png",
   "icons/icon-512.png",
