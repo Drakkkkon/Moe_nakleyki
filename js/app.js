@@ -1,838 +1,511 @@
-/* Мое_наклейки — приложение */
+/* Мое_граббер 1.0.0 — интерфейс: вкладки, адресная строка, выбор картинок, скачивание в ZIP, сохранение */
 (function () {
-  "use strict";
+  'use strict';
+  var VERSION = '1.0.0';
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function jget(k, d) { try { var v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }
+  function jset(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); if (window.MMAccount && /^mg_(settings|bookmarks|history)$/.test(k)) window.MMAccount.changed(); } catch (e) {} }
+  function fmtSize(n) { return n >= 1048576 ? (n / 1048576).toFixed(1).replace('.', ',') + ' МБ' : Math.max(1, Math.round(n / 1024)) + ' КБ'; }
+  function host(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return ''; } }
+  function plural(n, a, b, c) { var m = n % 100, k = n % 10; return n + ' ' + (m > 10 && m < 15 ? c : k === 1 ? a : k >= 2 && k <= 4 ? b : c); }
 
-  const VERSION = "1.1.0";
-  const CHANGELOG = "1.1.0 — общий аккаунт по почте и паролю (Настройки → «Аккаунт»), один на все мои сайты: шаблоны, текущая наклейка и настройки сами переходят между телефоном и компьютером. 1.0.0 — первая версия: печать с телефона по USB (принтеры наклеек TSPL и чековые ESC/POS), текст, картинки, QR-коды, штрихкоды Code 128 и EAN-13, шаблоны и примеры, отправка фото и ссылок через «Поделиться».";
+  var DEF = { mode: 'fast', search: 'bing', conv: '', q: 92, shots: true, min: 100, conc: 4, proxies: Grab.DEFAULT_PROXIES.slice() };
+  var S = Object.assign({}, DEF, jget('mg_settings', {}));
+  if (!Array.isArray(S.proxies) || !S.proxies.length) S.proxies = DEF.proxies.slice();
+  Grab.proxies = S.proxies;
+  function saveS() { jset('mg_settings', S); Grab.proxies = S.proxies; }
 
-  /* ---------- утилиты ---------- */
-  const $ = (s, r = document) => r.querySelector(s);
-  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-  const r1 = (v) => Math.round(v * 10) / 10;
-  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
-  const uid = () => Math.random().toString(36).slice(2, 9);
-  const clone = (o) => JSON.parse(JSON.stringify(o));
-
-  const store = {
-    get(k, def) { try { const v = localStorage.getItem(k); return v == null ? def : JSON.parse(v); } catch (e) { return def; } },
-    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); if (window.MMAccount) window.MMAccount.changed(); return true; } catch (e) { return false; } },
+  var SEARCH = {
+    bing: ['https://www.bing.com/search?q={q}', 'https://www.bing.com/images/search?q={q}'],
+    ddg: ['https://html.duckduckgo.com/html/?q={q}', 'https://www.bing.com/images/search?q={q}'],
+    google: ['https://www.google.com/search?q={q}&gbv=1', 'https://www.google.com/search?q={q}&tbm=isch&gbv=1'],
+    yandex: ['https://yandex.ru/search/?text={q}', 'https://yandex.ru/images/search?text={q}']
   };
-
-  function h(tag, props, ...kids) {
-    const el = document.createElement(tag);
-    for (const [k, v] of Object.entries(props || {})) {
-      if (v == null || v === false) continue;
-      if (k === "class") el.className = v;
-      else if (k === "html") el.innerHTML = v;
-      else if (k === "value") el.value = v;
-      else if (k === "checked") el.checked = !!v;
-      else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
-      else el.setAttribute(k, v === true ? "" : v);
-    }
-    for (const c of kids.flat()) if (c != null && c !== false) el.append(c.nodeType ? c : document.createTextNode(String(c)));
-    return el;
-  }
-  const icon = (d) => h("span", { html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + d + '"/></svg>' }).firstChild;
-  const IC = {
-    centerH: "M11 2h2v20h-2zM4 8h5v8H4zm11 0h5v8h-5z",
-    centerV: "M2 11h20v2H2zM8 4h8v5H8zm0 11h8v5H8z",
-    copy: "M8 8h12v12H8zm2 2v8h8v-8zM4 4h12v2H6v10H4z",
-    trash: "M9 3h6l1 2h4v2H4V5h4zM6 8h12l-1 13H7zm4 3v7h1.5v-7zm2.5 0v7H14v-7z",
-    left: "M4 5h16v2H4zm0 4h10v2H4zm0 4h16v2H4zm0 4h10v2H4z",
-    center: "M4 5h16v2H4zm3 4h10v2H7zm-3 4h16v2H4zm3 4h10v2H7z",
-    right: "M4 5h16v2H4zm6 4h10v2H10zm-6 4h16v2H4zm6 4h10v2H10z",
-  };
-
-  let toastT;
-  function toast(msg, err) {
-    if (!msg) return;
-    const t = $("#toast");
-    t.textContent = msg;
-    t.classList.toggle("err", !!err);
-    t.classList.add("show");
-    clearTimeout(toastT);
-    toastT = setTimeout(() => t.classList.remove("show"), err ? 5200 : 2600);
-  }
-
-  /* ---------- состояние ---------- */
-  const PRESETS = [[58, 40], [58, 30], [50, 30], [40, 30], [30, 20], [60, 40], [70, 50], [80, 50], [100, 50], [100, 100], [100, 150]];
-  const DEFAULTS = {
-    lang: "tspl", dpi: 203, density: 8, speed: "", gapMm: 2,
-    paper: 58, feedLines: 4, cut: false,
-    offX: 0, offY: 0, rotate: false, invert: false, theme: "auto",
-  };
-  let settings = Object.assign({}, DEFAULTS, store.get("mn_settings", {}));
-  let design = store.get("mn_design", null) || starterDesign();
-  let templates = store.get("mn_templates", []);
-  let selectedId = null;
-  let lastRender = null;
-  const printer = new UsbPrinter();
-
-  function starterDesign() {
-    return {
-      widthMm: 58, heightMm: 40, border: false,
-      items: [
-        { id: uid(), type: "text", x: 3, y: 11, w: 52, text: "Моя первая\nнаклейка", size: 20, bold: true, align: "center", font: "sans", invert: false },
-      ],
-    };
-  }
-  const dpmm = () => (+settings.dpi === 300 ? 12 : 8);
-  const saveSettings = () => store.set("mn_settings", settings);
-  let saveT, warnedQuota = false;
-  function saveSoon() {
-    clearTimeout(saveT);
-    saveT = setTimeout(() => {
-      if (!store.set("mn_design", design) && !warnedQuota) {
-        warnedQuota = true;
-        toast("Не хватает места для автосохранения — уберите лишние картинки", true);
-      }
-    }, 300);
-  }
-
-  /* ---------- картинки ---------- */
-  const images = new Map();
-  function getImage(src) {
-    if (!src) return null;
-    let rec = images.get(src);
-    if (!rec) {
-      const img = new Image();
-      rec = { img, ok: false };
-      images.set(src, rec);
-      rec.p = new Promise((res) => {
-        img.onload = () => { rec.ok = true; scheduleRender(); res(); };
-        img.onerror = () => res();
-      });
-      img.src = src;
-    }
-    return rec.ok ? rec.img : null;
-  }
-  async function preloadImages(d) {
-    const ps = [];
-    for (const it of d.items) if (it.type === "image") { getImage(it.src); const r = images.get(it.src); if (r && r.p) ps.push(r.p); }
-    await Promise.all(ps);
-  }
-  function loadImgEl(url) {
-    return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-  }
-  /* Уменьшает картинку до 1000 px, кладёт на белый фон — для хранения и печати этого достаточно */
-  async function shrinkImage(blob) {
-    const url = URL.createObjectURL(blob);
-    try {
-      const img = await loadImgEl(url);
-      const max = 1000;
-      const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
-      const w = Math.max(1, Math.round(img.naturalWidth * s)), hh = Math.max(1, Math.round(img.naturalHeight * s));
-      const c = document.createElement("canvas");
-      c.width = w; c.height = hh;
-      const ctx = c.getContext("2d");
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(0, 0, w, hh);
-      ctx.drawImage(img, 0, 0, w, hh);
-      return { src: c.toDataURL("image/jpeg", 0.9), w, h: hh };
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-  }
-
-  /* ---------- отрисовка ---------- */
-  const paper = $("#paper"), overlay = $("#overlay"), previewCanvas = $("#preview");
-  let raf = 0;
-  function scheduleRender() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; renderPreview(); }); }
-  function renderPreview() {
-    lastRender = LabelRender.render(design, { dpmm: dpmm(), canvas: previewCanvas, getImage });
-    layoutPaper();
-    drawOverlay();
-    updateWarnings();
-  }
-  function layoutPaper() {
-    const stage = $("#stage");
-    const avail = Math.max(120, stage.clientWidth - 36);
-    const maxH = Math.min(window.innerHeight * 0.42, 440);
-    const ratio = design.widthMm / design.heightMm;
-    let w = Math.min(avail, maxH * ratio);
-    paper.style.width = Math.round(w) + "px";
-    paper.style.height = Math.round(w / ratio) + "px";
-  }
-
-  let guides = { v: false, h: false };
-  function drawOverlay() {
-    overlay.textContent = "";
-    if (!lastRender) return;
-    const W = design.widthMm, H = design.heightMm;
-    const pct = (v, t) => (v / t) * 100 + "%";
-    for (const [id, msg] of Object.entries(lastRender.warnings)) {
-      const b = lastRender.boxes[id];
-      if (!b) continue;
-      overlay.append(h("div", { class: "warn-dot", title: msg, style: "left:" + pct(b.x, W) + ";top:" + pct(b.y, H) }, "!"));
-    }
-    const sel = selectedId && lastRender.boxes[selectedId];
-    if (sel) {
-      overlay.append(h("div", {
-        class: "sel",
-        style: "left:" + pct(sel.x, W) + ";top:" + pct(sel.y, H) + ";width:" + pct(sel.w, W) + ";height:" + pct(sel.h, H),
-      }, h("div", { class: "handle", "aria-label": "Изменить размер" })));
-    }
-    if (guides.v) overlay.append(h("div", { class: "guide v", style: "left:50%" }));
-    if (guides.h) overlay.append(h("div", { class: "guide h", style: "top:50%" }));
-  }
-
-  /* ---------- перетаскивание ---------- */
-  let drag = null;
-  function toMm(e) {
-    const r = paper.getBoundingClientRect();
-    return {
-      x: ((e.clientX - r.left) / r.width) * design.widthMm,
-      y: ((e.clientY - r.top) / r.height) * design.heightMm,
-      perPx: design.widthMm / r.width,
-    };
-  }
-  const itemById = (id) => design.items.find((i) => i.id === id);
-  function hitTest(pt) {
-    const pad = 8 * pt.perPx;
-    for (let i = design.items.length - 1; i >= 0; i--) {
-      const it = design.items[i];
-      const b = lastRender && lastRender.boxes[it.id];
-      if (!b) continue;
-      if (pt.x >= b.x - pad && pt.x <= b.x + b.w + pad && pt.y >= b.y - pad && pt.y <= b.y + b.h + pad) return it;
-    }
-    return null;
-  }
-  overlay.addEventListener("pointerdown", (e) => {
-    const pt = toMm(e);
-    if (e.target.closest(".handle") && selectedId) {
-      const it = itemById(selectedId), b = lastRender.boxes[selectedId];
-      drag = { mode: "resize", it, start: pt, w: it.w, h: b.h, ratio: b.w / b.h };
-    } else {
-      const it = hitTest(pt);
-      if (!it) { select(null); return; }
-      if (it.id !== selectedId) select(it.id);
-      drag = { mode: "move", it, start: pt, x: it.x, y: it.y, moved: false };
-    }
-    overlay.setPointerCapture(e.pointerId);
-    e.preventDefault();
-  });
-  overlay.addEventListener("pointermove", (e) => {
-    if (!drag) return;
-    const pt = toMm(e);
-    const dx = pt.x - drag.start.x, dy = pt.y - drag.start.y;
-    const it = drag.it;
-    if (drag.mode === "move") {
-      if (!drag.moved && Math.hypot(dx, dy) < 6 * pt.perPx) return;
-      drag.moved = true;
-      const b = lastRender.boxes[it.id];
-      const W = design.widthMm, H = design.heightMm, tol = 7 * pt.perPx;
-      let nx = drag.x + dx, ny = drag.y + dy;
-      guides = { v: false, h: false };
-      if (Math.abs(nx + b.w / 2 - W / 2) < tol) { nx = W / 2 - b.w / 2; guides.v = true; }
-      if (Math.abs(ny + b.h / 2 - H / 2) < tol) { ny = H / 2 - b.h / 2; guides.h = true; }
-      it.x = r1(clamp(nx, -b.w + 2, W - 2));
-      it.y = r1(clamp(ny, -b.h + 2, H - 2));
-    } else {
-      if (it.type === "text") it.w = r1(Math.max(5, drag.w + dx));
-      else if (it.type === "qr") it.w = r1(Math.max(6, drag.w + Math.max(dx, dy)));
-      else if (it.type === "image") {
-        if (it.keepRatio !== false) { it.w = r1(Math.max(3, drag.w + dx)); it.h = r1(it.w / drag.ratio); }
-        else { it.w = r1(Math.max(3, drag.w + dx)); it.h = r1(Math.max(3, drag.h + dy)); }
-      } else if (it.type === "barcode") { it.w = r1(Math.max(10, drag.w + dx)); it.h = r1(Math.max(4, drag.h + dy)); }
-    }
-    syncPosFields();
-    scheduleRender();
-  });
-  const endDrag = () => {
-    if (!drag) return;
-    drag = null;
-    guides = { v: false, h: false };
-    scheduleRender();
-    saveSoon();
-  };
-  overlay.addEventListener("pointerup", endDrag);
-  overlay.addEventListener("pointercancel", endDrag);
-
-  /* ---------- выбор и свойства ---------- */
-  function select(id) {
-    selectedId = id;
-    buildProps();
-    scheduleRender();
-    $("#stageHint").textContent = id
-      ? "Тащите элемент пальцем, а кружок в углу — чтобы изменить размер."
-      : design.items.length
-        ? "Нажмите на элемент, чтобы изменить его."
-        : "Добавьте на наклейку текст, картинку, QR-код или штрихкод.";
-  }
-
-  const changed = () => { scheduleRender(); saveSoon(); };
-
-  function numField(label, it, key, opts = {}) {
-    return h("label", { class: "field" }, h("span", null, label),
-      h("input", {
-        type: "number", inputmode: "decimal", step: opts.step || 0.5, "data-k": key,
-        value: r1(it[key]),
-        oninput: (e) => {
-          const v = parseFloat(e.target.value);
-          if (!isFinite(v)) return;
-          it[key] = Math.max(opts.min ?? -999, v);
-          if (it.type === "image" && it.keepRatio !== false && (key === "w" || key === "h")) {
-            const ratio = it.ratio || 1;
-            if (key === "w") it.h = r1(it.w / ratio); else it.w = r1(it.h * ratio);
-            syncPosFields();
-          }
-          changed();
-        },
-      }));
-  }
-  function posBlock(it, keys) {
-    const labels = { x: "X, мм", y: "Y, мм", w: it.type === "qr" ? "Размер" : "Ширина", h: "Высота" };
-    return h("details", null, h("summary", null, "Точное положение"),
-      h("div", { class: keys.length > 3 ? "four" : "three" }, keys.map((k) => numField(labels[k], it, k, { min: k === "w" || k === "h" ? 3 : -999 }))));
-  }
-  function syncPosFields() {
-    const it = itemById(selectedId);
-    if (!it) return;
-    for (const inp of $$("#props input[data-k]")) {
-      if (document.activeElement === inp) continue;
-      inp.value = r1(it[inp.dataset.k]);
-    }
-  }
-  function seg(options, current, onPick, cls) {
-    const wrap = h("div", { class: "seg " + (cls || ""), role: "radiogroup" });
-    for (const [val, label] of options) {
-      const b = h("button", { type: "button", class: val === current ? "on" : "", "aria-pressed": val === current ? "true" : "false" }, label);
-      b.addEventListener("click", () => {
-        $$("button", wrap).forEach((x) => { x.classList.remove("on"); x.setAttribute("aria-pressed", "false"); });
-        b.classList.add("on");
-        b.setAttribute("aria-pressed", "true");
-        onPick(val);
-      });
-      wrap.append(b);
-    }
-    return wrap;
-  }
-  function sw(label, checked, onChange) {
-    return h("label", { class: "switch" }, h("input", { type: "checkbox", checked, onchange: (e) => onChange(e.target.checked) }), h("span", null, label));
-  }
-  function rangeRow(min, max, step, value, fmt, onInput) {
-    const out = h("output", null, fmt(value));
-    const inp = h("input", { type: "range", min, max, step, value, oninput: (e) => { const v = +e.target.value; out.textContent = fmt(v); onInput(v); } });
-    return h("div", { class: "range-row" }, inp, out);
-  }
-
-  function centerItem(it, axis) {
-    const b = lastRender.boxes[it.id];
-    if (!b) return;
-    if (axis === "h") it.x = r1((design.widthMm - b.w) / 2);
-    else it.y = r1((design.heightMm - b.h) / 2);
-    syncPosFields();
-    changed();
-  }
-
-  function buildProps() {
-    const box = $("#props");
-    box.textContent = "";
-    const it = itemById(selectedId);
-    if (!it) return;
-    const names = { text: "Текст", image: "Картинка", qr: "QR-код", barcode: "Штрихкод" };
-    const iconBtn = (d, title, fn, cls) => h("button", { type: "button", class: "icon-btn " + (cls || ""), title, "aria-label": title, onclick: fn }, icon(d));
-    box.append(h("div", { class: "props-head" }, h("b", null, names[it.type]),
-      h("div", { class: "icon-btns" },
-        iconBtn(IC.centerH, "По центру по горизонтали", () => centerItem(it, "h")),
-        iconBtn(IC.centerV, "По центру по вертикали", () => centerItem(it, "v")),
-        iconBtn(IC.copy, "Копия", () => {
-          const c = clone(it); c.id = uid(); c.x = r1(c.x + 2); c.y = r1(c.y + 2);
-          design.items.push(c); select(c.id); changed();
-        }),
-        iconBtn(IC.trash, "Удалить", () => {
-          design.items = design.items.filter((x) => x.id !== it.id); select(null); changed();
-        }, "danger"))));
-
-    if (it.type === "text") {
-      box.append(
-        h("label", { class: "field" }, h("span", null, "Текст"),
-          h("textarea", { rows: 2, value: it.text, oninput: (e) => { it.text = e.target.value; changed(); } })),
-        h("div", { class: "field" }, h("span", null, "Размер шрифта"),
-          rangeRow(5, 96, 1, it.size, (v) => v, (v) => { it.size = v; changed(); })),
-        h("div", { class: "field" }, h("span", null, "Выравнивание"),
-          seg([["left", icon(IC.left)], ["center", icon(IC.center)], ["right", icon(IC.right)]], it.align || "left", (v) => { it.align = v; changed(); })),
-        h("label", { class: "field" }, h("span", null, "Шрифт"),
-          h("select", { onchange: (e) => { it.font = e.target.value; changed(); } },
-            [["sans", "Обычный"], ["narrow", "Узкий"], ["serif", "С засечками"], ["mono", "Моноширинный"]].map(([v, l]) =>
-              h("option", { value: v, selected: (it.font || "sans") === v ? "selected" : null }, l)))),
-        sw("Жирный", it.bold, (v) => { it.bold = v; changed(); }),
-        sw("Белым по чёрному", it.invert, (v) => { it.invert = v; changed(); }),
-        posBlock(it, ["x", "y", "w"]));
-    } else if (it.type === "image") {
-      box.append(
-        h("div", { class: "btn-row" },
-          h("button", { type: "button", class: "btn", onclick: () => pickImage(it.id) }, "Заменить"),
-          h("button", { type: "button", class: "btn ghost", onclick: () => { fitImage(it); syncPosFields(); changed(); } }, "На всю наклейку")),
-        h("div", { class: "field" }, h("span", null, "Как печатать"),
-          seg([["photo", "Фото (точками)"], ["bw", "Чёрно-белая"]], it.mode || "photo", (v) => { it.mode = v; changed(); })),
-        h("div", { class: "field" }, h("span", null, "Яркость"),
-          rangeRow(-100, 100, 5, it.level || 0, (v) => (v > 0 ? "+" + v : v), (v) => { it.level = v; changed(); })),
-        sw("Сохранять пропорции", it.keepRatio !== false, (v) => { it.keepRatio = v; if (v) { it.h = r1(it.w / (it.ratio || 1)); syncPosFields(); } changed(); }),
-        posBlock(it, ["x", "y", "w", "h"]));
-    } else if (it.type === "qr") {
-      box.append(
-        h("label", { class: "field" }, h("span", null, "Текст или ссылка"),
-          h("textarea", { rows: 2, value: it.text, oninput: (e) => { it.text = e.target.value; changed(); } })),
-        h("div", { class: "field" }, h("span", null, "Размер, мм"),
-          rangeRow(8, Math.max(10, Math.floor(Math.min(design.widthMm, design.heightMm))), 1, Math.round(it.w), (v) => v,
-            (v) => { it.w = v; syncPosFields(); changed(); })),
-        h("label", { class: "field" }, h("span", null, "Защита от повреждений"),
-          h("select", { onchange: (e) => { it.ecc = e.target.value; changed(); } },
-            [["L", "Низкая — мельче точки"], ["M", "Обычная"], ["Q", "Повышенная"], ["H", "Высокая — крупнее код"]].map(([v, l]) =>
-              h("option", { value: v, selected: (it.ecc || "M") === v ? "selected" : null }, l)))),
-        posBlock(it, ["x", "y", "w"]));
-    } else if (it.type === "barcode") {
-      box.append(
-        h("div", { class: "field" }, h("span", null, "Тип штрихкода"),
-          seg([["code128", "Code 128"], ["ean13", "EAN-13 (товары)"]], it.format || "code128", (v) => { it.format = v; changed(); })),
-        h("label", { class: "field" }, h("span", null, "Код"),
-          h("input", { type: "text", value: it.text, autocapitalize: "off", autocomplete: "off", spellcheck: "false", oninput: (e) => { it.text = e.target.value; changed(); } }),
-          h("small", { class: "muted" }, "Code 128 — латинские буквы и цифры. EAN-13 — 12 цифр, последняя посчитается сама.")),
-        sw("Подпись под штрихкодом", it.showText !== false, (v) => { it.showText = v; changed(); }),
-        posBlock(it, ["x", "y", "w", "h"]));
-    }
-    box.append(h("div", { class: "warn", id: "propWarn", hidden: true }));
-    updateWarnings();
-  }
-  function updateWarnings() {
-    const w = $("#propWarn");
-    if (!w) return;
-    const msg = lastRender && selectedId && lastRender.warnings[selectedId];
-    w.hidden = !msg;
-    w.textContent = msg || "";
-  }
-
-  /* ---------- добавление ---------- */
-  let replaceImageId = null;
-  function pickImage(replaceId) {
-    replaceImageId = replaceId || null;
-    $("#fileInput").click();
-  }
-  function fitImage(it, margin = 1) {
-    const W = design.widthMm, H = design.heightMm;
-    const ratio = it.ratio || 1;
-    let w = W - margin * 2, hh = w / ratio;
-    if (hh > H - margin * 2) { hh = H - margin * 2; w = hh * ratio; }
-    it.w = r1(w); it.h = r1(hh);
-    it.x = r1((W - w) / 2); it.y = r1((H - hh) / 2);
-  }
-  function addImageItem(img, opts = {}) {
-    const it = { id: uid(), type: "image", x: 0, y: 0, w: 10, h: 10, src: img.src, ratio: img.w / img.h, mode: "photo", level: 0, keepRatio: true };
-    fitImage(it, opts.margin ?? 2);
-    design.items.push(it);
-    return it;
-  }
-  $("#fileInput").addEventListener("change", async (e) => {
-    const f = e.target.files && e.target.files[0];
-    e.target.value = "";
-    if (!f) return;
-    try {
-      const img = await shrinkImage(f);
-      const target = replaceImageId && itemById(replaceImageId);
-      if (target) {
-        target.src = img.src;
-        const oldRatio = target.ratio;
-        target.ratio = img.w / img.h;
-        if (target.keepRatio !== false && oldRatio !== target.ratio) target.h = r1(target.w / target.ratio);
-        select(target.id);
-      } else {
-        const it = addImageItem(img);
-        select(it.id);
-      }
-      changed();
-    } catch (err) {
-      toast("Не удалось открыть картинку. Попробуйте другую (JPG или PNG).", true);
-    }
-  });
-  function addItem(type) {
-    const W = design.widthMm, H = design.heightMm;
-    let it;
-    if (type === "image") { pickImage(null); return; }
-    if (type === "text") {
-      const size = clamp(Math.round(Math.min(H * 0.2, 8) / 0.3528), 8, 48);
-      it = { id: uid(), type: "text", x: 2, y: 0, w: r1(W - 4), text: "Текст", size, bold: false, align: "center", font: "sans", invert: false };
-      it.y = r1(Math.max(0, (H - LabelRender.measureText(it, dpmm())) / 2));
-    } else if (type === "qr") {
-      const s = Math.min(30, Math.min(W, H) - 6);
-      it = { id: uid(), type: "qr", x: r1((W - s) / 2), y: r1((H - s) / 2), w: r1(s), text: "https://example.com", ecc: "M" };
-    } else if (type === "barcode") {
-      const w = W - 6, bh = Math.min(18, H * 0.45);
-      it = { id: uid(), type: "barcode", x: 3, y: r1((H - bh) / 2), w: r1(w), h: r1(bh), text: "12345678", format: "code128", showText: true };
-    }
-    design.items.push(it);
-    select(it.id);
-    changed();
-  }
-  $$("[data-add]").forEach((b) => b.addEventListener("click", () => addItem(b.dataset.add)));
-
-  /* ---------- размер наклейки ---------- */
-  const sizeSel = $("#sizePreset");
-  function fillSizes() {
-    sizeSel.textContent = "";
-    let found = false;
-    for (const [w, hh] of PRESETS) {
-      const on = w === design.widthMm && hh === design.heightMm;
-      if (on) found = true;
-      sizeSel.append(h("option", { value: w + "x" + hh, selected: on ? "selected" : null }, w + " × " + hh + " мм"));
-    }
-    sizeSel.append(h("option", { value: "custom", selected: found ? null : "selected" }, found ? "Свой размер…" : "Свой: " + design.widthMm + " × " + design.heightMm + " мм"));
-    $("#customSize").hidden = found;
-    $("#labelW").value = design.widthMm;
-    $("#labelH").value = design.heightMm;
-  }
-  function resizeLabel(w, hh) {
-    w = clamp(r1(w), 10, 120); hh = clamp(r1(hh), 10, 300);
-    const sx = w / design.widthMm, sy = hh / design.heightMm, s = Math.min(sx, sy);
-    for (const it of design.items) {
-      it.x = r1(it.x * sx); it.y = r1(it.y * sy);
-      if (it.type === "text") { it.w = r1(it.w * sx); it.size = Math.max(5, Math.round(it.size * s)); }
-      else if (it.type === "qr") it.w = r1(it.w * s);
-      else if (it.type === "image") { it.w = r1(it.w * s); it.h = r1(it.h * s); }
-      else if (it.type === "barcode") { it.w = r1(it.w * sx); it.h = r1(it.h * sy); }
-    }
-    design.widthMm = w; design.heightMm = hh;
-    buildProps();
-    changed();
-  }
-  sizeSel.addEventListener("change", () => {
-    if (sizeSel.value === "custom") { $("#customSize").hidden = false; $("#labelW").focus(); return; }
-    const [w, hh] = sizeSel.value.split("x").map(Number);
-    resizeLabel(w, hh);
-    fillSizes();
-  });
-  const customChange = () => {
-    const w = parseFloat($("#labelW").value), hh = parseFloat($("#labelH").value);
-    if (w >= 10 && hh >= 10) resizeLabel(w, hh);
-  };
-  $("#labelW").addEventListener("change", customChange);
-  $("#labelH").addEventListener("change", customChange);
-  $("#borderToggle").addEventListener("change", (e) => { design.border = e.target.checked; changed(); });
-
-  /* ---------- печать ---------- */
-  function errText(e) {
-    const m = e && e.message;
-    if (m === "NO_WEBUSB") return "Этот браузер не умеет печатать по USB. Откройте сайт в Google Chrome на Android.";
-    if (m === "NOT_PRINTER") return "Это устройство не похоже на принтер. Выберите принтер.";
-    if (m === "BUSY") return "Принтер занят другим приложением. Закройте его и переподключите кабель.";
-    if (m === "NOT_CONNECTED") return "Принтер не подключён.";
-    if (m === "BUSY_PRINTING") return "Подождите, идёт печать.";
-    if (e && e.name === "NotFoundError") return null; // выбор отменён
-    if (e && e.name === "SecurityError") return "Нет доступа к USB. Откройте сайт по ссылке https:// в Google Chrome.";
-    if (e && e.name === "NetworkError") return "Связь с принтером потеряна. Переподключите кабель.";
-    return "Ошибка печати: " + (m || e);
-  }
-  async function connect() {
-    if (!UsbPrinter.supported()) { toast(errText(new Error("NO_WEBUSB")), true); return false; }
-    try {
-      await printer.request();
-      toast("Принтер подключён: " + printer.name);
-      return true;
-    } catch (e) {
-      const t = errText(e);
-      if (t) toast(t, true);
-      return false;
-    }
-  }
-  function cropWidth(r, maxW) {
-    if (r.width <= maxW) return r;
-    const off = Math.floor((r.width - maxW) / 2);
-    const bits = new Uint8Array(maxW * r.height);
-    for (let y = 0; y < r.height; y++) bits.set(r.bits.subarray(y * r.width + off, y * r.width + off + maxW), y * maxW);
-    return { width: maxW, height: r.height, bits };
-  }
-  function buildJob(d, copies) {
-    const r = LabelRender.render(d, { dpmm: dpmm(), offsetXmm: +settings.offX || 0, offsetYmm: +settings.offY || 0, rotate180: !!settings.rotate, getImage });
-    if (settings.lang === "escpos") {
-      const head = (+settings.paper === 80 ? 72 : 48) * dpmm();
-      if (r.width > head) toast("Наклейка шире, чем печатает принтер (" + (+settings.paper === 80 ? 72 : 48) + " мм) — края обрежутся", true);
-      return PrinterProto.buildESCPOS(cropWidth(r, head), { copies, feedLines: settings.feedLines, cut: settings.cut, invert: settings.invert });
-    }
-    return PrinterProto.buildTSPL(r, {
-      widthMm: d.widthMm, heightMm: d.heightMm, gapMm: +settings.gapMm || 0, density: +settings.density,
-      speed: settings.speed ? +settings.speed : null, copies, invert: settings.invert,
-    });
-  }
-  async function send(bytes, okMsg) {
-    const btn = $("#printBtn");
-    btn.classList.add("busy");
-    btn.textContent = "Печатаю…";
-    try {
-      await printer.write(bytes);
-      toast(okMsg);
-      return true;
-    } catch (e) {
-      toast(errText(e), true);
-      return false;
-    } finally {
-      btn.classList.remove("busy");
-      updateStatus();
-    }
-  }
-  async function printDesign(d, copies) {
-    if (!printer.connected && !(await connect())) return;
-    await preloadImages(d);
-    const bytes = buildJob(d, copies);
-    await send(bytes, copies > 1 ? "Отправлено на печать: " + copies + " шт." : "Отправлено на печать");
-  }
-  $("#printBtn").addEventListener("click", () => {
-    if (!printer.connected) { connect(); return; }
-    printDesign(design, getCopies());
-  });
-  function getCopies() { return clamp(parseInt($("#copies").value, 10) || 1, 1, 999); }
-  $("#copiesMinus").addEventListener("click", () => { $("#copies").value = Math.max(1, getCopies() - 1); });
-  $("#copiesPlus").addEventListener("click", () => { $("#copies").value = Math.min(999, getCopies() + 1); });
-  $("#copies").addEventListener("change", () => { $("#copies").value = getCopies(); });
-
-  function testDesign() {
-    const W = design.widthMm, H = design.heightMm;
-    const q = Math.max(8, Math.min(H - 10, W * 0.4, 24));
-    return {
-      widthMm: W, heightMm: H, border: true,
-      items: [
-        { id: "t1", type: "text", x: 2, y: 2.4, w: W - 4, text: "↑ верх", size: Math.max(6, Math.round(Math.min(H * 0.1, 3.2) / 0.3528)), bold: true, align: "center", font: "sans" },
-        { id: "t2", type: "text", x: 3, y: H / 2 - q / 2, w: W - q - 8, text: "Тест печати\n" + W + " × " + H + " мм", size: Math.max(6, Math.round(Math.min(H * 0.12, 4.2) / 0.3528)), bold: false, align: "left", font: "sans" },
-        { id: "q1", type: "qr", x: W - q - 3, y: H / 2 - q / 2, w: q, text: "Мое_наклейки " + VERSION, ecc: "M" },
-      ],
-    };
-  }
-
-  /* ---------- статус ---------- */
-  function updateStatus() {
-    const on = printer.connected;
-    $("#statusChip").classList.toggle("on", on);
-    $("#statusText").textContent = on ? (printer.device.productName || printer.name) : "Нет принтера";
-    $("#printerName").textContent = on ? printer.name : "Не подключён";
-    $("#printerSub").textContent = on
-      ? "Готов к печати по USB"
-      : UsbPrinter.supported() ? "Подключите принтер кабелем через переходник OTG" : "Нужен Google Chrome на Android";
-    $("#connectBtn").textContent = on ? "Отключить" : "Подключить";
-    const pb = $("#printBtn");
-    if (!pb.classList.contains("busy")) pb.textContent = on ? "Печать" : "Подключить принтер";
-  }
-  printer.onchange = updateStatus;
-  $("#statusChip").addEventListener("click", () => { if (printer.connected) showPage("settings"); else connect(); });
-  $("#connectBtn").addEventListener("click", async () => {
-    if (printer.connected) { await printer.disconnect(); toast("Принтер отключён"); }
-    else await connect();
-  });
-  $("#testPrint").addEventListener("click", () => printDesign(testDesign(), 1));
-  $("#feedBtn").addEventListener("click", async () => {
-    if (!printer.connected && !(await connect())) return;
-    const bytes = settings.lang === "escpos"
-      ? PrinterProto.buildESCPOSFeed({ feedLines: settings.feedLines || 4 })
-      : PrinterProto.buildTSPLFeed({ widthMm: design.widthMm, heightMm: design.heightMm, gapMm: +settings.gapMm || 0 });
-    await send(bytes, "Готово");
-  });
-
-  /* ---------- настройки ---------- */
-  function applyTheme() {
-    const t = settings.theme;
-    if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
-    else delete document.documentElement.dataset.theme;
-    try { localStorage.setItem("mn_theme", t); } catch (e) { /* ничего */ }
-    $$("#themeSeg button").forEach((b) => b.classList.toggle("on", b.dataset.theme === t));
-  }
-  function bindSettings() {
-    const bind = (id, key, type) => {
-      const el = $(id);
-      if (type === "check") el.checked = !!settings[key];
-      else el.value = settings[key];
-      el.addEventListener(type === "check" ? "change" : "input", () => {
-        let v = type === "check" ? el.checked : el.value;
-        if (type === "num") v = parseFloat(v) || 0;
-        settings[key] = v;
-        saveSettings();
-        if (key === "lang") document.body.dataset.lang = v;
-        if (key === "dpi") { scheduleRender(); }
-        if (key === "density") $("#densityVal").textContent = v;
-      });
-    };
-    bind("#setLang", "lang");
-    bind("#setDpi", "dpi");
-    bind("#setDensity", "density", "num");
-    bind("#setSpeed", "speed");
-    bind("#setGap", "gapMm", "num");
-    bind("#setPaper", "paper");
-    bind("#setFeed", "feedLines", "num");
-    bind("#setCut", "cut", "check");
-    bind("#setOffX", "offX", "num");
-    bind("#setOffY", "offY", "num");
-    bind("#setRotate", "rotate", "check");
-    bind("#setInvert", "invert", "check");
-    $("#densityVal").textContent = settings.density;
-    document.body.dataset.lang = settings.lang;
-    $$("#themeSeg button").forEach((b) => b.addEventListener("click", () => { settings.theme = b.dataset.theme; saveSettings(); applyTheme(); }));
-    applyTheme();
-  }
-
-  /* ---------- шаблоны ---------- */
-  function thumbOf(d) {
-    const r = LabelRender.render(d, { dpmm: dpmm(), getImage });
-    const max = 260;
-    const s = Math.min(1, max / Math.max(r.width, r.height));
-    const c = document.createElement("canvas");
-    c.width = Math.max(1, Math.round(r.width * s));
-    c.height = Math.max(1, Math.round(r.height * s));
-    const ctx = c.getContext("2d");
-    ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(r.canvas, 0, 0, c.width, c.height);
-    return c.toDataURL("image/png");
-  }
-  const EXAMPLES = [
-    () => ({
-      name: "Ценник", design: {
-        widthMm: 58, heightMm: 40, border: false, items: [
-          { id: uid(), type: "text", x: 2, y: 2, w: 54, text: "Название товара", size: 12, bold: true, align: "center", font: "sans", invert: false },
-          { id: uid(), type: "text", x: 2, y: 8, w: 54, text: "1 990 ₸", size: 30, bold: true, align: "center", font: "sans", invert: false },
-          { id: uid(), type: "barcode", x: 4, y: 22.5, w: 50, h: 15, text: "487000123456", format: "ean13", showText: true },
-        ],
-      },
-    }),
-    () => ({
-      name: "QR со ссылкой", design: {
-        widthMm: 40, heightMm: 30, border: false, items: [
-          { id: uid(), type: "qr", x: 1.5, y: 3, w: 24, text: "https://example.com", ecc: "M" },
-          { id: uid(), type: "text", x: 25.5, y: 8, w: 13.5, text: "Наведи камеру", size: 8, bold: true, align: "left", font: "sans", invert: false },
-        ],
-      },
-    }),
-    () => ({
-      name: "Подпись на банку", design: {
-        widthMm: 50, heightMm: 30, border: true, items: [
-          { id: uid(), type: "text", x: 3, y: 6, w: 44, text: "Малиновое варенье", size: 15, bold: true, align: "center", font: "serif", invert: false },
-          { id: uid(), type: "text", x: 3, y: 20, w: 44, text: "июль 2026", size: 9, bold: false, align: "center", font: "sans", invert: false },
-        ],
-      },
-    }),
+  var TILES = [
+    ['Википедия', 'https://ru.wikipedia.org/', 'W'], ['Викисклад', 'https://commons.wikimedia.org/', '◎'],
+    ['Unsplash', 'https://unsplash.com/', '◼'], ['Pexels', 'https://www.pexels.com/ru-ru/', 'P'],
+    ['Pinterest', 'https://ru.pinterest.com/', 'P'], ['Reddit', 'https://old.reddit.com/r/pics/', 'R'],
+    ['Картинки Bing', 'https://www.bing.com/images/trending', 'B'], ['DeviantArt', 'https://www.deviantart.com/', 'D']
   ];
-  function openDesign(d) {
-    design = clone(d);
-    for (const it of design.items) it.id = it.id || uid();
-    selectedId = null;
-    fillSizes();
-    $("#borderToggle").checked = !!design.border;
-    select(null);
-    changed();
-    showPage("label");
+
+  // ---------- мелочи ----------
+  var toastT;
+  function toast(t, long) { var el = $('#toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(function () { el.classList.remove('on'); }, long ? 5200 : 2600); }
+  function busy(on) { $('#loadBar').classList.toggle('on', !!on); }
+  var openSheets = [];
+  function openSheet(id) { var el = $('#' + id); el.hidden = false; requestAnimationFrame(function () { el.classList.add('on'); }); if (openSheets.indexOf(id) < 0) openSheets.push(id); }
+  function closeSheet(id) { var el = $('#' + id); el.classList.remove('on'); setTimeout(function () { if (!el.classList.contains('on')) el.hidden = true; }, 220); openSheets = openSheets.filter(function (x) { return x !== id; }); }
+  document.addEventListener('click', function (e) { var c = e.target.closest('[data-close]'); if (c) closeSheet(c.closest('.sheet').id); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && openSheets.length && openSheets[openSheets.length - 1] !== 'work') closeSheet(openSheets[openSheets.length - 1]); });
+
+  // ---------- вкладки ----------
+  var tabs = jget('mg_tabs', null), cur = 0, seq = 1;
+  if (!Array.isArray(tabs) || !tabs.length) tabs = [newTabObj()];
+  tabs.forEach(function (t) { t.id = seq++; t.items = null; t.html = null; });
+  cur = Math.min(jget('mg_tab', 0) || 0, tabs.length - 1);
+  function newTabObj(url) { return { id: seq++, hist: url ? [url] : [], i: url ? 0 : -1, title: '', mode: '' }; }
+  function T() { return tabs[cur]; }
+  function curUrl() { var t = T(); return t.i >= 0 ? t.hist[t.i] : ''; }
+  function saveTabs() {
+    jset('mg_tabs', tabs.map(function (t) { var s = Math.max(0, t.hist.length - 30); return { hist: t.hist.slice(s), i: Math.max(-1, t.i - s), title: t.title, mode: t.mode }; }));
+    jset('mg_tab', cur);
   }
-  function tplCard(name, d, thumb, onDel) {
-    const card = h("div", { class: "tpl" },
-      h("button", { type: "button", class: "thumb", "aria-label": "Открыть «" + name + "»", onclick: () => { openDesign(d); toast("Открыто: " + name); } },
-        h("img", { src: thumb, alt: "" })),
-      h("div", { class: "meta" },
-        h("div", null, h("div", { class: "name" }, name), h("div", { class: "size" }, d.widthMm + " × " + d.heightMm + " мм")),
-        onDel ? h("button", { type: "button", class: "del", "aria-label": "Удалить шаблон", onclick: onDel, html: '<svg viewBox="0 0 24 24"><path d="' + IC.trash + '"/></svg>' }) : null));
-    return card;
+
+  // ---------- адрес ----------
+  function toUrl(s, images) {
+    s = (s || '').trim(); if (!s) return '';
+    if (/^https?:\/\//i.test(s)) return s;
+    if (/^\/\//.test(s)) return 'https:' + s;
+    if (!/\s/.test(s) && /^[^/]+\.[a-zа-яё]{2,}(?::\d+)?(\/.*)?$/i.test(s)) return 'https://' + s;
+    if (/^localhost(:\d+)?(\/|$)/.test(s)) return 'http://' + s;
+    var tpl = (SEARCH[S.search] || SEARCH.bing)[images ? 1 : 0];
+    return tpl.replace('{q}', encodeURIComponent(s));
   }
-  function renderTemplates() {
-    const list = $("#tplList");
-    list.textContent = "";
-    if (!templates.length) list.append(h("div", { class: "empty" }, "Здесь появятся сохранённые наклейки"));
-    templates.forEach((t, i) => list.append(tplCard(t.name, t.design, t.thumb, () => {
-      if (!confirm("Удалить шаблон «" + t.name + "»?")) return;
-      templates.splice(i, 1);
-      store.set("mn_templates", templates);
-      renderTemplates();
-    })));
-    const ex = $("#exampleList");
-    ex.textContent = "";
-    for (const mk of EXAMPLES) { const e = mk(); ex.append(tplCard(e.name, e.design, thumbOf(e.design), null)); }
+
+  var frame = null, loadId = 0, collectWait = {};
+  function makeFrame(direct) {
+    var box = $('#frameBox'); box.innerHTML = '';
+    frame = document.createElement('iframe');
+    frame.id = 'frame';
+    frame.setAttribute('referrerpolicy', 'no-referrer');
+    frame.setAttribute('allow', 'fullscreen');
+    if (direct) frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox');
+    else frame.setAttribute('sandbox', 'allow-scripts allow-forms');
+    box.appendChild(frame);
+    return frame;
   }
-  $("#tplSave").addEventListener("click", async () => {
-    const name = $("#tplName").value.trim() || "Наклейка " + (templates.length + 1);
-    await preloadImages(design);
-    templates.unshift({ id: uid(), name, design: clone(design), thumb: thumbOf(design), created: Date.now() });
-    if (!store.set("mn_templates", templates)) {
-      templates.shift();
-      toast("Не хватает места — удалите старые шаблоны или уменьшите картинки", true);
+
+  function showHome() {
+    $('#home').hidden = false; $('#frameBox').hidden = true; $('#err').hidden = true;
+    $('#addr').value = ''; $('#lock').textContent = '⌕';
+    renderHome(); updateBar(); setFab(0);
+  }
+  function showFrame() { $('#home').hidden = true; $('#frameBox').hidden = false; $('#err').hidden = true; }
+  function showErr(msg) { $('#home').hidden = true; $('#frameBox').hidden = true; $('#err').hidden = false; $('#errText').textContent = msg; }
+
+  function updateBar() {
+    var t = T(), u = curUrl();
+    $('#bBack').disabled = t.i < 0; $('#bFwd').disabled = t.i >= t.hist.length - 1;
+    $('#tabCount').textContent = tabs.length;
+    if (document.activeElement !== $('#addr')) $('#addr').value = u ? u.replace(/^https:\/\//, '') : '';
+    $('#lock').textContent = !u ? '⌕' : /^https:/.test(u) ? '🔒' : 'ⓘ';
+    var bm = jget('mg_bookmarks', []); var on = u && bm.some(function (b) { return b.url === u; });
+    $('#bStar').textContent = on ? '★' : '☆'; $('#bStar').classList.toggle('on', !!on); $('#bStar').hidden = !u;
+    document.title = (t.title ? t.title + ' — ' : '') + 'Мое_граббер';
+  }
+  function setFab(n) { var b = $('#fabN'); b.hidden = !n; b.textContent = n > 999 ? '999+' : n; }
+
+  function addHistory(url, title) {
+    var h = jget('mg_history', []).filter(function (x) { return x.url !== url; });
+    h.unshift({ url: url, title: title || host(url), t: Date.now() }); jset('mg_history', h.slice(0, 200));
+  }
+
+  var pageCache = {};
+  function navigate(url, opts) {
+    opts = opts || {};
+    url = Grab.unwrap(url);
+    if (!url) return;
+    var t = T();
+    if (!opts.fromHist) {
+      if (opts.replace && t.i >= 0) t.hist[t.i] = url;
+      else { t.hist = t.hist.slice(0, t.i + 1); t.hist.push(url); t.i = t.hist.length - 1; }
+    }
+    saveTabs(); render(opts.reload);
+  }
+
+  async function render(reload) {
+    var t = T(), url = curUrl(), my = ++loadId;
+    updateBar();
+    if (!url) { showHome(); return; }
+    var mode = t.mode || S.mode;
+    t.items = null; t.html = null; t.title = host(url);
+    setFab(0); busy(true);
+    if (mode === 'direct') {
+      showFrame(); var f = makeFrame(true); f.src = url;
+      f.onload = function () { if (my === loadId) busy(false); };
+      setTimeout(function () { if (my === loadId) busy(false); }, 8000);
+      addHistory(url, t.title);
+      // картинки ищем по коду страницы в фоне
+      try { var r0 = await getPage(url, reload); if (my !== loadId) return; if (r0.html) { var ex0 = Grab.extract(r0.html, r0.url); t.items = ex0.items; t.title = ex0.title || t.title; setFab(countBig(t.items)); updateBar(); } } catch (e) {}
       return;
     }
-    $("#tplName").value = "";
-    renderTemplates();
-    toast("Шаблон сохранён");
-  });
-  $("#newLabel").addEventListener("click", () => {
-    openDesign({ widthMm: design.widthMm, heightMm: design.heightMm, border: false, items: [] });
-  });
-  $("#downloadPng").addEventListener("click", async () => {
-    await preloadImages(design);
-    const r = LabelRender.render(design, { dpmm: dpmm(), getImage });
-    r.canvas.toBlob((b) => {
-      const a = h("a", { href: URL.createObjectURL(b), download: "nakleyka_" + design.widthMm + "x" + design.heightMm + ".png" });
-      document.body.append(a);
-      a.click();
-      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
-    }, "image/png");
-  });
-
-  /* ---------- страницы ---------- */
-  function showPage(name) {
-    document.body.dataset.page = name;
-    $$(".page").forEach((p) => p.classList.toggle("active", p.id === "page-" + name));
-    $$(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.page === name));
-    if (name === "templates") renderTemplates();
-    if (name === "label") requestAnimationFrame(renderPreview);
-    window.scrollTo(0, 0);
-  }
-  $$(".tabs button").forEach((b) => b.addEventListener("click", () => showPage(b.dataset.page)));
-
-  /* ---------- «Поделиться» из других приложений ---------- */
-  async function takeShared() {
-    const params = new URLSearchParams(location.search);
-    if (!params.has("shared")) return;
-    history.replaceState(null, "", location.pathname);
     try {
-      const cache = await caches.open("mn-share");
-      const metaRes = await cache.match("shared-meta");
-      const fileRes = await cache.match("shared-file");
-      const meta = metaRes ? await metaRes.json() : {};
-      const blob = fileRes ? await fileRes.blob() : null;
-      await cache.delete("shared-meta");
-      await cache.delete("shared-file");
-      const text = [meta.title, meta.text].filter(Boolean).join("\n").trim();
-      const urlMatch = (meta.url || "") || (text.match(/https?:\/\/\S+/) || [""])[0];
-      if (!blob && !text && !urlMatch) return;
-      if (design.items.length) {
-        templates.unshift({ id: uid(), name: "Черновик " + new Date().toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }), design: clone(design), thumb: thumbOf(design), created: Date.now() });
-        store.set("mn_templates", templates);
-      }
-      design = { widthMm: design.widthMm, heightMm: design.heightMm, border: false, items: [] };
-      const W = design.widthMm, H = design.heightMm;
-      if (blob) {
-        addImageItem(await shrinkImage(blob), { margin: 1 });
-      } else if (urlMatch) {
-        const s = Math.min(W, H) - 4;
-        design.items.push({ id: uid(), type: "qr", x: r1((W - s) / 2), y: 2, w: r1(s), text: urlMatch, ecc: "M" });
-      } else {
-        const it = { id: uid(), type: "text", x: 2, y: 2, w: W - 4, text, size: clamp(Math.round(Math.min(H * 0.15, 6) / 0.3528), 7, 30), bold: false, align: "center", font: "sans", invert: false };
-        it.y = r1(Math.max(1, (H - LabelRender.measureText(it, dpmm())) / 2));
-        design.items.push(it);
-      }
-      fillSizes();
-      select(design.items[0] ? design.items[0].id : null);
-      changed();
-      toast("Получено — проверьте и нажмите «Печать»");
+      var res = await getPage(url, reload);
+      if (my !== loadId) return;
+      if (res.image || Grab.extOf(url) && !res.html) { renderImagePage(url, t); busy(false); return; }
+      var refresh = Grab.metaRefresh(res.html, res.url);
+      if (refresh && refresh !== url) { busy(false); navigate(refresh, { replace: true }); return; }
+      var ex = Grab.extract(res.html, res.url);
+      if (looksLikeImageText(res.html) && Grab.extOf(url)) { renderImagePage(url, t); busy(false); return; }
+      t.items = ex.items; t.html = res.html; t.title = ex.title || host(url);
+      showFrame();
+      var f2 = makeFrame(false);
+      f2.onload = function () { if (my === loadId) busy(false); };
+      f2.srcdoc = Grab.prepare(res.html, res.url, mode);
+      setFab(countBig(t.items)); updateBar(); addHistory(url, t.title); saveTabs();
     } catch (e) {
-      toast("Не удалось принять файл", true);
+      if (my !== loadId) return;
+      busy(false);
+      if (Grab.extOf(url)) { renderImagePage(url, t); return; }
+      showErr((e && e.message ? e.message : 'Ошибка') + '. Сайт мог запретить показ через прокси.');
     }
   }
-
-  /* ---------- запуск ---------- */
-  $("#verLabel").textContent = "v" + VERSION;
-  $("#aboutVer").textContent = "версия " + VERSION;
-  $("#changelog").textContent = CHANGELOG;
-  bindSettings();
-  fillSizes();
-  $("#borderToggle").checked = !!design.border;
-  showPage("label");
-  select(null);
-  updateStatus();
-  window.addEventListener("resize", () => { layoutPaper(); });
-  if (UsbPrinter.supported()) printer.reconnect().then(updateStatus).catch(() => {});
-  takeShared();
-  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
+  function looksLikeImageText(s) { return /^\s*(�|GIF8|RIFF|\x89PNG)/.test(s.slice(0, 8)); }
+  function renderImagePage(url, t) {
+    t.items = [{ url: url, kind: 'img', ext: Grab.extOf(url), alt: '' }]; t.title = Grab.nameFrom(url);
+    showFrame(); var f = makeFrame(false);
+    f.srcdoc = '<!DOCTYPE html><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><style>html,body{margin:0;height:100%;background:#111;display:grid;place-items:center}img{max-width:100%;max-height:100vh}</style><img src="' + esc(url) + '">';
+    setFab(1); updateBar(); addHistory(url, t.title);
   }
-  window.__mn = { get design() { return design; }, settings, printer, buildJob, render: () => renderPreview() };
+  async function getPage(url, reload) {
+    var c = pageCache[url];
+    if (c && !reload && Date.now() - c.t < 10 * 60000) return c.r;
+    var r = await Grab.fetchPage(url);
+    if (r.image) { pageCache[url] = { r: { image: true, url: url }, t: Date.now() }; return pageCache[url].r; }
+    var keys = Object.keys(pageCache); if (keys.length > 15) delete pageCache[keys[0]];
+    pageCache[url] = { r: r, t: Date.now() };
+    return r;
+  }
+  function countBig(items) { return (items || []).filter(function (i) { return i.kind !== 'icon'; }).length; }
+
+  // сообщения из страницы
+  window.addEventListener('message', function (e) {
+    var d = e.data; if (!d || !d.mg || !frame || e.source !== frame.contentWindow) return;
+    if (d.type === 'nav' && d.url) {
+      if (d.tab) { tabs.push(newTabObj()); cur = tabs.length - 1; }
+      navigate(d.url);
+    } else if (d.type === 'toast') toast(d.text, true);
+    else if (d.type === 'loaded') { busy(false); if (d.title && !T().title) { T().title = d.title; updateBar(); } }
+    else if (d.type === 'ctx') openPicker({ only: d.url, alt: d.alt });
+    else if (d.type === 'collected' && collectWait[d.id]) { collectWait[d.id](d.items || []); delete collectWait[d.id]; }
+  });
+  function collectLive() {
+    return new Promise(function (resolve) {
+      if (!frame || !frame.contentWindow || (T().mode || S.mode) === 'direct') { resolve([]); return; }
+      var id = Math.random().toString(36).slice(2);
+      collectWait[id] = resolve;
+      try { frame.contentWindow.postMessage({ mg: 1, type: 'collect', id: id }, '*'); } catch (e) { resolve([]); }
+      setTimeout(function () { if (collectWait[id]) { delete collectWait[id]; resolve([]); } }, 1500);
+    });
+  }
+
+  // ---------- главная ----------
+  function renderHome() {
+    $('#tiles').innerHTML = TILES.map(function (t) { return '<button class="tile" data-url="' + esc(t[1]) + '"><span>' + esc(t[2]) + '</span>' + esc(t[0]) + '</button>'; }).join('');
+    var bm = jget('mg_bookmarks', []), hi = jget('mg_history', []).slice(0, 12);
+    $('#bmHead').hidden = !bm.length; $('#hiHead').hidden = !hi.length;
+    function row(x, del) { return '<div class="li"><button class="go" data-url="' + esc(x.url) + '"><b>' + esc(x.title || host(x.url)) + '</b><small>' + esc(x.url.replace(/^https?:\/\//, '')) + '</small></button>' + (del ? '<button class="ib x" data-del="' + esc(x.url) + '" aria-label="Удалить">✕</button>' : '') + '</div>'; }
+    $('#bmList').innerHTML = bm.map(function (x) { return row(x, true); }).join('');
+    $('#hiList').innerHTML = hi.map(function (x) { return row(x, false); }).join('');
+  }
+  $('#home').addEventListener('click', function (e) {
+    var d = e.target.closest('[data-del]');
+    if (d) { jset('mg_bookmarks', jget('mg_bookmarks', []).filter(function (b) { return b.url !== d.dataset.del; })); renderHome(); return; }
+    var g = e.target.closest('[data-url]'); if (g) navigate(g.dataset.url);
+  });
+  $('#homeForm').addEventListener('submit', function (e) { e.preventDefault(); var u = toUrl($('#homeQ').value); if (u) { $('#homeQ').blur(); navigate(u); } });
+  $('#homeImg').addEventListener('click', function () { var q = $('#homeQ').value.trim(); if (!q) { $('#homeQ').focus(); toast('Напишите, какие картинки искать'); return; } navigate(toUrl(q, true)); });
+
+  // ---------- верхняя панель ----------
+  $('#addrForm').addEventListener('submit', function (e) { e.preventDefault(); var u = toUrl($('#addr').value); $('#addr').blur(); if (u) navigate(u); });
+  $('#addr').addEventListener('focus', function () { var u = curUrl(); if (u) this.value = u; this.select(); });
+  $('#addr').addEventListener('blur', function () { setTimeout(updateBar, 100); });
+  $('#bBack').addEventListener('click', function () { var t = T(); if (t.i >= 0) { t.i--; saveTabs(); render(); } });
+  $('#bFwd').addEventListener('click', function () { var t = T(); if (t.i < t.hist.length - 1) { t.i++; saveTabs(); render(); } });
+  $('#bReload').addEventListener('click', function () { render(true); });
+  $('#bStar').addEventListener('click', function () {
+    var u = curUrl(); if (!u) return;
+    var bm = jget('mg_bookmarks', []), i = bm.findIndex(function (b) { return b.url === u; });
+    if (i >= 0) { bm.splice(i, 1); toast('Убрано из закладок'); } else { bm.unshift({ url: u, title: T().title || host(u) }); toast('Добавлено в закладки'); }
+    jset('mg_bookmarks', bm); updateBar();
+  });
+  $('#errRetry').addEventListener('click', function () { render(true); });
+  $('#errDirect').addEventListener('click', function () { T().mode = 'direct'; saveTabs(); render(); });
+  $('#errChrome').addEventListener('click', function () { window.open(curUrl(), '_blank', 'noopener'); });
+
+  // вкладки
+  function renderTabs() {
+    $('#tabList').innerHTML = tabs.map(function (t, i) {
+      var u = t.i >= 0 ? t.hist[t.i] : '';
+      return '<div class="li' + (i === cur ? ' cur' : '') + '"><button class="go" data-tab="' + i + '"><b>' + esc(t.title || (u ? host(u) : 'Новая вкладка')) + '</b><small>' + esc(u ? u.replace(/^https?:\/\//, '') : 'Главная') + '</small></button><button class="ib x" data-tclose="' + i + '" aria-label="Закрыть вкладку">✕</button></div>';
+    }).join('');
+  }
+  $('#bTabs').addEventListener('click', function () { renderTabs(); openSheet('tabs'); });
+  $('#tabNew').addEventListener('click', function () { tabs.push(newTabObj()); cur = tabs.length - 1; saveTabs(); closeSheet('tabs'); render(); setTimeout(function () { $('#homeQ').focus(); }, 250); });
+  $('#tabList').addEventListener('click', function (e) {
+    var c = e.target.closest('[data-tclose]');
+    if (c) {
+      var i = +c.dataset.tclose; tabs.splice(i, 1);
+      if (!tabs.length) tabs.push(newTabObj());
+      if (cur >= tabs.length) cur = tabs.length - 1; else if (i < cur) cur--;
+      saveTabs(); renderTabs(); render(); return;
+    }
+    var g = e.target.closest('[data-tab]'); if (g) { cur = +g.dataset.tab; saveTabs(); closeSheet('tabs'); render(); }
+  });
+
+  // меню
+  var MODE_HINT = { fast: 'Страница без её скриптов: открывается быстро, картинки находятся надёжно. Сайты-приложения могут выглядеть пустыми.', full: 'Скрипты сайта работают. Сайт выглядит ближе к настоящему, но может работать с ошибками.', direct: 'Сайт как в обычном браузере. Некоторые сайты запрещают показ внутри другого сайта, а адрес при переходах по ссылкам не обновляется.' };
+  function renderMenu() {
+    var m = T().mode || S.mode;
+    $$('#modeSeg button').forEach(function (b) { b.classList.toggle('on', b.dataset.mode === m); });
+    $('#modeHint').textContent = MODE_HINT[m];
+    $('#mnUrl').textContent = curUrl() ? host(curUrl()) : 'Главная';
+  }
+  $('#bMenu').addEventListener('click', function () { renderMenu(); openSheet('menu'); });
+  $('#modeSeg').addEventListener('click', function (e) { var b = e.target.closest('[data-mode]'); if (!b) return; T().mode = b.dataset.mode; saveTabs(); renderMenu(); if (curUrl()) render(); });
+  $('#menu').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-act]'); if (!b) return;
+    var a = b.dataset.act, u = curUrl(); closeSheet('menu');
+    if (a === 'newtab') { tabs.push(newTabObj()); cur = tabs.length - 1; saveTabs(); render(); }
+    else if (a === 'home') { var t = T(); t.hist = t.hist.slice(0, t.i + 1); t.i = -1; t.hist = []; t.title = ''; saveTabs(); render(); }
+    else if (a === 'pageshot') { if (!u) { toast('Сначала откройте сайт'); return; } openPicker({ pageShot: true }); }
+    else if (a === 'chrome') { if (u) window.open(u, '_blank', 'noopener'); }
+    else if (a === 'copy') { if (u) (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(function () { toast('Адрес скопирован'); }, function () { prompt('Адрес:', u); }); }
+    else if (a === 'settings') openSettings();
+  });
+
+  // ---------- выбор картинок ----------
+  var P = { items: [], sel: {}, fmt: 'all' };
+  function fmtOf(it) { return it.ext || (it.kind === 'svg' ? 'svg' : it.kind === 'canvas' ? 'png' : ''); }
+  function isSmall(it) { if (it.kind === 'icon') return true; var m = Math.max(it.nw || 0, it.nh || 0); return it.loaded && m > 0 && m < S.min; }
+  async function openPicker(o) {
+    o = o || {};
+    var u = curUrl();
+    if (!u) { toast('Сначала откройте сайт или вставьте ссылку на фото'); return; }
+    var t = T();
+    P.fmt = 'all'; $('#pkPage').checked = !!o.pageShot;
+    $('#pkTitle').textContent = 'Ищу картинки…'; $('#pkSub').textContent = host(u);
+    $('#pkGrid').innerHTML = ''; $('#pkEmpty').hidden = true; $('#pkChips').innerHTML = '';
+    openSheet('picker');
+    if (!t.items) { try { var r = await getPage(u); if (r.html) t.items = Grab.extract(r.html, r.url).items; else t.items = [{ url: u, kind: 'img', ext: Grab.extOf(u) }]; } catch (e) { t.items = Grab.extOf(u) ? [{ url: u, kind: 'img', ext: Grab.extOf(u) }] : []; } }
+    var live = await collectLive();
+    var map = {}, list = [];
+    function put(it) { var k = it.url; if (map[k]) { var m = map[k]; if (it.nw > (m.nw || 0)) { m.nw = it.nw; m.nh = it.nh; } if (it.alt && !m.alt) m.alt = it.alt; return; } var c = Object.assign({ ext: Grab.extOf(k) }, it); map[k] = c; list.push(c); }
+    (t.items || []).forEach(put);
+    live.forEach(function (it) { if (/^(https?:|data:image)/.test(it.url)) put(it); });
+    if (o.only && !map[o.only]) put({ url: o.only, kind: 'img', alt: o.alt || '' });
+    P.items = list; P.sel = {};
+    list.forEach(function (it) { if (o.only ? it.url === o.only : (it.kind !== 'icon' && it.kind !== 'data')) P.sel[it.url] = 1; });
+    if (o.only) { $('#pkSmall').checked = false; }
+    drawPicker(true);
+    if (o.only) setTimeout(function () { var el = $('#pkGrid [data-u="' + CSS.escape(o.only) + '"]'); if (el) el.scrollIntoView({ block: 'center' }); }, 300);
+  }
+  function visible() {
+    var small = $('#pkSmall').checked, list = P.items.filter(function (it) {
+      if (P.fmt !== 'all' && (fmtOf(it) || 'other') !== P.fmt) return false;
+      if (small && isSmall(it)) return false;
+      return true;
+    });
+    if ($('#pkSort').value === 'big') list = list.slice().sort(function (a, b) { return (b.nw * b.nh || 0) - (a.nw * a.nh || 0); });
+    return list;
+  }
+  function drawChips() {
+    var cnt = { all: P.items.length };
+    P.items.forEach(function (it) { var f = fmtOf(it) || 'other'; cnt[f] = (cnt[f] || 0) + 1; });
+    var order = ['all', 'jpg', 'png', 'webp', 'gif', 'svg', 'avif', 'bmp', 'ico', 'tif', 'heic', 'apng', 'other'];
+    $('#pkChips').innerHTML = order.filter(function (f) { return cnt[f]; }).map(function (f) {
+      var name = f === 'all' ? 'Все' : f === 'other' ? 'Другие' : f.toUpperCase();
+      return '<button class="chip' + (P.fmt === f ? ' on' : '') + '" data-f="' + f + '">' + name + ' <i>' + cnt[f] + '</i></button>';
+    }).join('');
+  }
+  function tileHtml(it) {
+    var f = fmtOf(it), on = P.sel[it.url];
+    var dim = it.nw ? it.nw + '×' + it.nh : '';
+    return '<div class="tl' + (on ? ' on' : '') + (it.failed ? ' bad' : '') + '" data-u="' + esc(it.url) + '"><img loading="lazy" decoding="async" referrerpolicy="no-referrer" src="' + esc(it.url) + '" alt="">' +
+      '<span class="ck">✓</span><span class="fm">' + esc(f ? f.toUpperCase() : 'IMG') + '</span><span class="dm">' + esc(dim) + '</span><button class="zm" data-zoom aria-label="Посмотреть">⤢</button></div>';
+  }
+  function drawPicker(first) {
+    drawChips();
+    var list = visible();
+    $('#pkGrid').innerHTML = list.map(tileHtml).join('');
+    $('#pkEmpty').hidden = !!list.length;
+    $$('#pkGrid img').forEach(function (img) {
+      var it = byUrl(img.parentNode.dataset.u);
+      img.onload = function () { it.loaded = true; it.nw = img.naturalWidth; it.nh = img.naturalHeight; var d = img.parentNode.querySelector('.dm'); if (d) d.textContent = it.nw + '×' + it.nh; if (first && $('#pkSmall').checked && isSmall(it)) { delete P.sel[it.url]; img.parentNode.remove(); updCount(); } };
+      img.onerror = function () { it.failed = true; img.parentNode.classList.add('bad'); };
+    });
+    updCount();
+  }
+  function byUrl(u) { for (var i = 0; i < P.items.length; i++) if (P.items[i].url === u) return P.items[i]; return null; }
+  function updCount() {
+    var n = Object.keys(P.sel).length, shown = $$('#pkGrid .tl').length;
+    $('#pkTitle').textContent = 'Найдено: ' + plural(P.items.length, 'картинка', 'картинки', 'картинок');
+    $('#pkSub').textContent = host(curUrl()) + (shown !== P.items.length ? ' · показано ' + shown : '');
+    var page = $('#pkPage').checked;
+    $('#pkGo').textContent = n || page ? 'Скачать ' + (n ? plural(n, 'фото', 'фото', 'фото') : '') + (page ? (n ? ' + скриншот' : 'скриншот страницы') : '') + ' в ZIP' : 'Выберите картинки';
+    $('#pkGo').disabled = !n && !page;
+  }
+  $('#pkGrid').addEventListener('click', function (e) {
+    var tl = e.target.closest('.tl'); if (!tl) return;
+    var u = tl.dataset.u;
+    if (e.target.closest('[data-zoom]')) { openPreview(u); return; }
+    if (P.sel[u]) delete P.sel[u]; else P.sel[u] = 1;
+    tl.classList.toggle('on', !!P.sel[u]); updCount();
+  });
+  $('#pkChips').addEventListener('click', function (e) { var c = e.target.closest('[data-f]'); if (!c) return; P.fmt = c.dataset.f; drawPicker(); });
+  $('#pkSmall').addEventListener('change', function () { drawPicker(); });
+  $('#pkSort').addEventListener('change', function () { drawPicker(); });
+  $('#pkPage').addEventListener('change', updCount);
+  $('#pkAll').addEventListener('click', function () { $$('#pkGrid .tl').forEach(function (tl) { P.sel[tl.dataset.u] = 1; tl.classList.add('on'); }); updCount(); });
+  $('#pkNone').addEventListener('click', function () { P.sel = {}; $$('#pkGrid .tl').forEach(function (tl) { tl.classList.remove('on'); }); updCount(); });
+  $('#pkRescan').addEventListener('click', function () { T().items = null; delete pageCache[curUrl()]; openPicker({ pageShot: $('#pkPage').checked }); });
+  $('#fab').addEventListener('click', function () { openPicker(); });
+
+  var pvUrl = '';
+  function openPreview(u) {
+    var it = byUrl(u); pvUrl = u;
+    $('#pvImg').src = u; $('#pvName').textContent = Grab.nameFrom(u, it && it.alt) + (fmtOf(it) ? '.' + fmtOf(it) : '');
+    $('#pvInfo').textContent = (it && it.nw ? it.nw + '×' + it.nh + ' · ' : '') + (/^data:/.test(u) ? 'встроено в страницу' : host(u));
+    $('#pvOpen').href = u; $('#pvOpen').hidden = /^data:/.test(u);
+    $('#pvToggle').classList.toggle('on', !!P.sel[u]);
+    openSheet('preview');
+  }
+  $('#pvToggle').addEventListener('click', function () {
+    if (P.sel[pvUrl]) delete P.sel[pvUrl]; else P.sel[pvUrl] = 1;
+    this.classList.toggle('on', !!P.sel[pvUrl]);
+    var tl = $('#pkGrid [data-u="' + CSS.escape(pvUrl) + '"]'); if (tl) tl.classList.toggle('on', !!P.sel[pvUrl]); updCount();
+  });
+
+  // ---------- скачивание ----------
+  var stop = false, lastZip = null;
+  $('#pkGo').addEventListener('click', function () { var urls = P.items.filter(function (it) { return P.sel[it.url]; }); grabAll(urls, $('#pkPage').checked); });
+  $('#wkStop').addEventListener('click', function () { stop = true; this.disabled = true; this.textContent = 'Останавливаю…'; });
+
+  async function grabAll(items, pageShot) {
+    stop = false; $('#wkStop').disabled = false; $('#wkStop').textContent = 'Остановить и сохранить, что есть';
+    closeSheet('picker'); openSheet('work');
+    var zip = new ZipWriter(), total = items.length + (pageShot ? 1 : 0), done = 0;
+    var ok = 0, shots = 0, fails = [], lines = [];
+    var page = curUrl(), pageTitle = T().title || host(page);
+    var log = $('#wkLog'); log.innerHTML = '';
+    var convDir = S.conv ? 'Фото (' + S.conv.toUpperCase() + ')/' : '';
+    function step(text, cls) {
+      done++;
+      $('#wkBar').style.width = Math.round(done / total * 100) + '%';
+      $('#wkTitle').textContent = done < total ? 'Скачиваю ' + done + ' из ' + total + '…' : 'Собираю архив…';
+      var li = document.createElement('li'); li.className = cls || ''; li.textContent = text; log.appendChild(li); log.scrollTop = log.scrollHeight;
+    }
+    $('#wkTitle').textContent = 'Скачиваю 0 из ' + total + '…'; $('#wkBar').style.width = '0%';
+    $('#wkSub').textContent = host(page);
+    var pad = String(items.length).length < 3 ? 3 : String(items.length).length;
+    var queue = items.map(function (it, i) { return { it: it, n: String(i + 1).padStart(pad, '0') }; });
+    async function worker() {
+      while (queue.length && !stop) {
+        var job = queue.shift(), it = job.it, nm = job.n + ' ' + Grab.nameFrom(it.url, it.alt);
+        var src = /^data:/.test(it.url) ? '(встроено в страницу)' : it.url;
+        var img = await Grab.fetchImage(it.url);
+        if (stop && !img) break;
+        if (img) {
+          var p = zip.add('Фото/' + nm + '.' + img.ext, img.bytes); ok++;
+          lines.push(p + '  ←  ' + src + '  [' + img.via + ', ' + fmtSize(img.bytes.length) + ']');
+          if (S.conv) { var cv = await Grab.convert(img, S.conv, S.q / 100); if (cv) zip.add(convDir + nm + '.' + cv.ext, cv.bytes); }
+          step('✓ ' + nm + '.' + img.ext + ' · ' + fmtSize(img.bytes.length), 'ok');
+        } else if (S.shots && !/^data:/.test(it.url)) {
+          var sh = await Grab.screenshot(it.url, false);
+          if (sh) { var p2 = zip.add('Скриншоты/' + nm + '.' + sh.ext, sh.bytes); shots++; lines.push(p2 + '  ←  ' + src + '  [' + sh.via + ']'); step('📷 ' + nm + ' — скриншот', 'shot'); }
+          else { fails.push(src); step('✕ ' + nm + ' — не удалось', 'bad'); }
+        } else { fails.push(src); step('✕ ' + nm + ' — не удалось', 'bad'); }
+      }
+    }
+    var ws = []; for (var w = 0; w < Math.min(+S.conc || 4, Math.max(1, items.length)); w++) ws.push(worker());
+    await Promise.all(ws);
+    if (pageShot && !stop) {
+      $('#wkTitle').textContent = 'Снимаю страницу целиком…';
+      var ps = await Grab.screenshot(page, true);
+      if (ps) { var p3 = zip.add('Скриншот страницы.' + ps.ext, ps.bytes); lines.push(p3 + '  ←  ' + page + '  [' + ps.via + ']'); step('📷 Скриншот страницы · ' + fmtSize(ps.bytes.length), 'shot'); }
+      else { fails.push('Скриншот страницы: ' + page); step('✕ Скриншот страницы не получился', 'bad'); }
+    }
+    queue.forEach(function (j) { fails.push(/^data:/.test(j.it.url) ? '(встроено в страницу)' : j.it.url); });
+    var now = new Date();
+    var head = 'Мое_граббер ' + VERSION + '\nСтраница: ' + pageTitle + '\n' + page + '\nДата: ' + now.toLocaleString('ru-RU') + '\n\nФото «как есть»: ' + ok + ', скриншотов: ' + shots + ', не удалось: ' + fails.length + '\n\n';
+    zip.add('список.txt', head + lines.sort().join('\n') + '\n');
+    if (fails.length) zip.add('не скачались.txt', 'Эти картинки не удалось скачать ни напрямую, ни через прокси, ни скриншотом:\n\n' + fails.join('\n') + '\n');
+    var blob = zip.blob();
+    lastZip = { blob: blob, ok: ok, shots: shots, fails: fails.length, page: page };
+    closeSheet('work');
+    if (!ok && !shots) { toast('Ничего не скачалось. Проверьте прокси в настройках или включите скриншоты.', true); }
+    var stamp = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + '-' + String(now.getMinutes()).padStart(2, '0');
+    openSave('Мое_граббер_' + (host(page) || 'фото').replace(/[^\wа-яё.-]+/gi, '_') + '_' + stamp + '.zip');
+  }
+
+  // ---------- сохранение ----------
+  function openSave(name) {
+    var z = lastZip;
+    $('#svName').value = name;
+    $('#svSub').textContent = fmtSize(z.blob.size);
+    $('#svSum').innerHTML = '<span class="ok">✓ Фото: ' + z.ok + '</span>' + (z.shots ? '<span class="shot">📷 Скриншоты: ' + z.shots + '</span>' : '') + (z.fails ? '<span class="bad">✕ Не удалось: ' + z.fails + '</span>' : '');
+    var canPick = 'showSaveFilePicker' in window;
+    var canShare = false; try { canShare = !!(navigator.canShare && navigator.canShare({ files: [new File([new Blob(['x'])], 'a.zip', { type: 'application/zip' })] })); } catch (e) {}
+    $('#svPick').hidden = !canPick; $('#svShare').hidden = !canShare;
+    $('#svShare').classList.toggle('pri', !canPick);
+    $('#svHint').textContent = canPick ? 'Можно сохранить несколько раз в разные места.' : 'Совет: чтобы Chrome спрашивал папку для «Загрузок», включите в Chrome → Настройки → Скачанные файлы → «Спрашивать, где сохранять файлы».';
+    openSheet('save');
+  }
+  function zipName() { var n = $('#svName').value.trim() || 'Мое_граббер.zip'; n = n.replace(/[\\/:*?"<>|]+/g, '_'); return /\.zip$/i.test(n) ? n : n + '.zip'; }
+  $('#svPick').addEventListener('click', async function () {
+    try {
+      var h = await window.showSaveFilePicker({ suggestedName: zipName(), types: [{ description: 'ZIP-архив', accept: { 'application/zip': ['.zip'] } }] });
+      var w = await h.createWritable(); await w.write(lastZip.blob); await w.close();
+      toast('Сохранено: ' + h.name);
+    } catch (e) { if (e.name !== 'AbortError') { toast('Не получилось сохранить так — пробую «Загрузки»'); download(); } }
+  });
+  $('#svShare').addEventListener('click', async function () {
+    try { var f = new File([lastZip.blob], zipName(), { type: 'application/zip' }); await navigator.share({ files: [f], title: zipName() }); }
+    catch (e) { if (e.name !== 'AbortError') toast('Не удалось открыть «Поделиться»: ' + (e.message || e.name)); }
+  });
+  $('#svDl').addEventListener('click', download);
+  function download() {
+    var url = URL.createObjectURL(lastZip.blob), a = document.createElement('a');
+    a.href = url; a.download = zipName(); document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+    toast('Архив отправлен в «Загрузки»');
+  }
+
+  // ---------- настройки ----------
+  function openSettings() {
+    $('#stMode').value = S.mode; $('#stSearch').value = S.search; $('#stConv').value = S.conv;
+    $('#stQ').value = S.q; $('#stQv').textContent = S.q; $('#stShots').checked = !!S.shots;
+    $('#stMin').value = S.min; $('#stConc').value = String(S.conc);
+    $('#stProxies').value = S.proxies.join('\n'); $('#stTests').innerHTML = '';
+    openSheet('settings');
+  }
+  function bindSet(id, key, fn) { $(id).addEventListener('change', function () { S[key] = fn ? fn(this) : this.value; saveS(); }); }
+  bindSet('#stMode', 'mode'); bindSet('#stSearch', 'search'); bindSet('#stConv', 'conv');
+  bindSet('#stQ', 'q', function (el) { return +el.value; }); $('#stQ').addEventListener('input', function () { $('#stQv').textContent = this.value; });
+  bindSet('#stShots', 'shots', function (el) { return el.checked; });
+  bindSet('#stMin', 'min', function (el) { return Math.max(0, +el.value || 0); });
+  bindSet('#stConc', 'conc', function (el) { return +el.value; });
+  $('#stProxies').addEventListener('change', function () {
+    var l = this.value.split('\n').map(function (s) { return s.trim(); }).filter(function (s) { return /^https?:\/\//.test(s); });
+    l = l.map(function (s) { return /\{u\}|\{raw\}/.test(s) ? s : s + '{u}'; });
+    S.proxies = l.length ? l : DEF.proxies.slice(); this.value = S.proxies.join('\n'); saveS();
+  });
+  $('#stReset').addEventListener('click', function () { S.proxies = DEF.proxies.slice(); $('#stProxies').value = S.proxies.join('\n'); saveS(); toast('Прокси как было'); });
+  $('#stTest').addEventListener('click', async function () {
+    var ul = $('#stTests'); ul.innerHTML = '';
+    for (var i = 0; i < S.proxies.length; i++) {
+      var li = document.createElement('li'); li.textContent = '… ' + host(S.proxies[i]); ul.appendChild(li);
+      var t0 = Date.now();
+      try { var r = await Grab.timedFetch(Grab.proxyUrl(S.proxies[i], 'https://example.com/'), {}, 15000); var tx = await r.text(); li.textContent = (r.ok && /Example Domain/.test(tx) ? '✓ ' : '✕ ') + host(S.proxies[i]) + ' — ' + (Date.now() - t0) + ' мс'; li.className = r.ok && /Example Domain/.test(tx) ? 'ok' : 'bad'; }
+      catch (e) { li.textContent = '✕ ' + host(S.proxies[i]) + ' — не отвечает'; li.className = 'bad'; }
+    }
+  });
+  $('#stClearHist').addEventListener('click', function () { jset('mg_history', []); toast('История очищена'); renderHome(); });
+  $('#stClearBm').addEventListener('click', function () { if (confirm('Удалить все закладки?')) { jset('mg_bookmarks', []); toast('Закладки удалены'); renderHome(); } });
+
+  // ---------- запуск ----------
+  // Ссылка из «Поделиться» (Android) или ?url=
+  (function () {
+    var q = new URLSearchParams(location.search), shared = q.get('url') || q.get('text') || q.get('title');
+    if (shared) {
+      var m = shared.match(/https?:\/\/\S+/); var u = m ? m[0] : toUrl(shared);
+      history.replaceState(null, '', location.pathname);
+      if (u) { if (curUrl()) { tabs.push(newTabObj()); cur = tabs.length - 1; } navigate(u); return; }
+    }
+    render();
+  })();
+
+  window.MG = { version: VERSION, navigate: navigate, openPicker: openPicker, state: function () { return { tabs: tabs, cur: cur, P: P, S: S }; } };
 })();

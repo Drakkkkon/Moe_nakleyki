@@ -1,248 +1,224 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Мое_наклейки</title>
-  <meta name="description" content="Печать термонаклеек на принтере Xprinter с телефона по USB">
-  <meta name="theme-color" content="#f3efe6" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#16140f" media="(prefers-color-scheme: dark)">
-  <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" type="image/png" href="icons/icon-192.png">
-  <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="css/style.css">
-  <script>
-    // тема до отрисовки, чтобы не мигало
-    try { const t = localStorage.getItem("mn_theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
-  </script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Мое_граббер</title>
+<meta name="description" content="Встроенный браузер, который скачивает фото с сайтов в ZIP-архив">
+<meta name="theme-color" content="#f5f6fb" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#14151b" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <header class="top">
-    <div class="brand">
-      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="6" width="28" height="20" rx="5" fill="var(--accent)"/><rect x="7" y="11" width="2" height="10" fill="var(--on-accent)"/><rect x="11" y="11" width="1" height="10" fill="var(--on-accent)"/><rect x="13.5" y="11" width="3" height="10" fill="var(--on-accent)"/><rect x="18" y="11" width="1" height="10" fill="var(--on-accent)"/><rect x="20.5" y="11" width="2" height="10" fill="var(--on-accent)"/><rect x="24" y="11" width="1" height="10" fill="var(--on-accent)"/></svg>
-      <div class="brand-text">
-        <h1>Мое_наклейки</h1>
-        <span class="ver" id="verLabel"></span>
-      </div>
+<!-- Мое_граббер 1.0.0 -->
+<header class="bar">
+  <button class="ib" id="bBack" title="Назад" aria-label="Назад">‹</button>
+  <button class="ib" id="bFwd" title="Вперёд" aria-label="Вперёд">›</button>
+  <form class="addr" id="addrForm" autocomplete="off">
+    <span class="lock" id="lock" aria-hidden="true">⌕</span>
+    <input id="addr" type="text" inputmode="url" enterkeyhint="go" spellcheck="false" autocapitalize="off" placeholder="Адрес сайта или поиск">
+    <button type="button" class="star" id="bStar" title="В закладки" aria-label="В закладки">☆</button>
+  </form>
+  <button class="ib" id="bReload" title="Обновить" aria-label="Обновить">⟳</button>
+  <button class="ib tabsBtn" id="bTabs" title="Вкладки" aria-label="Вкладки"><span id="tabCount">1</span></button>
+  <button class="ib" id="bMenu" title="Меню" aria-label="Меню">⋮</button>
+</header>
+<div class="load" id="loadBar"><i></i></div>
+
+<main id="view">
+  <section id="home" class="home">
+    <div class="logo"><img src="icons/icon-192.png" alt="" width="64" height="64"><div><h1>Мое_граббер</h1><p>Открывайте сайты и забирайте с них фото в ZIP-архив</p></div></div>
+    <form class="hsearch" id="homeForm" autocomplete="off">
+      <input id="homeQ" type="search" enterkeyhint="search" placeholder="Поиск или адрес сайта">
+      <div class="hbtns"><button class="btn pri" type="submit">Найти</button><button class="btn" type="button" id="homeImg">🖼 Картинки</button></div>
+    </form>
+    <h2>Быстрые ссылки</h2>
+    <div class="tiles" id="tiles"></div>
+    <h2 id="bmHead" hidden>Закладки</h2>
+    <div class="list" id="bmList"></div>
+    <h2 id="hiHead" hidden>Недавно</h2>
+    <div class="list" id="hiList"></div>
+  </section>
+  <div id="frameBox"></div>
+  <section id="err" class="err" hidden>
+    <div class="errIco">🌐</div>
+    <h2>Сайт не открылся</h2>
+    <p id="errText"></p>
+    <div class="row">
+      <button class="btn pri" id="errRetry">Повторить</button>
+      <button class="btn" id="errDirect">Открыть напрямую</button>
+      <button class="btn" id="errChrome">В Chrome ↗</button>
     </div>
-    <button id="statusChip" class="status" type="button" aria-live="polite">
-      <span class="dot"></span><span id="statusText">Нет принтера</span>
-    </button>
-  </header>
+    <p class="hint">Даже если страница не показалась, кнопка «Фото» всё равно может найти картинки — или вставьте прямую ссылку на фото.</p>
+  </section>
+</main>
 
-  <main>
-    <!-- ===== Наклейка ===== -->
-    <section id="page-label" class="page active" aria-label="Наклейка">
-      <div class="size-row">
-        <label class="field grow">
-          <span>Размер наклейки</span>
-          <select id="sizePreset"></select>
-        </label>
-        <label class="toggle-mini" title="Рамка по краю наклейки">
-          <input type="checkbox" id="borderToggle"><span>Рамка</span>
-        </label>
-      </div>
-      <div class="custom-size" id="customSize" hidden>
-        <label class="field"><span>Ширина, мм</span><input id="labelW" type="number" inputmode="decimal" min="10" max="120" step="1"></label>
-        <span class="times">×</span>
-        <label class="field"><span>Высота, мм</span><input id="labelH" type="number" inputmode="decimal" min="10" max="300" step="1"></label>
-      </div>
+<button class="fab" id="fab" aria-label="Скачать фото"><span class="fabI">⇩</span><span>Фото</span><b id="fabN" hidden>0</b></button>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-      <div class="stage" id="stage">
-        <div class="paper" id="paper">
-          <canvas id="preview"></canvas>
-          <div id="overlay" class="overlay"></div>
-        </div>
-      </div>
-      <p class="stage-hint" id="stageHint">Нажмите на элемент, чтобы изменить. Тащите пальцем, чтобы передвинуть.</p>
-
-      <div class="add-bar" role="toolbar" aria-label="Добавить на наклейку">
-        <button type="button" data-add="text"><svg viewBox="0 0 24 24"><path d="M5 5h14v3h-2V7h-4v11h2v2H9v-2h2V7H7v1H5z"/></svg><span>Текст</span></button>
-        <button type="button" data-add="image"><svg viewBox="0 0 24 24"><path d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm1 2v8.6l3.6-3.6 3 3 4.4-4.4 3 3V7zm4 2.5A1.5 1.5 0 1 1 6 9.5a1.5 1.5 0 0 1 3 0z"/></svg><span>Картинка</span></button>
-        <button type="button" data-add="qr"><svg viewBox="0 0 24 24"><path d="M3 3h8v8H3zm2 2v4h4V5zm8-2h8v8h-8zm2 2v4h4V5zM3 13h8v8H3zm2 2v4h4v-4zm8-2h3v3h-3zm3 3h3v3h-3zm3-3h2v3h-2zm-6 6h3v2h-3zm5 0h3v2h-3zM6 6h2v2H6zm10 0h2v2h-2zM6 16h2v2H6z"/></svg><span>QR-код</span></button>
-        <button type="button" data-add="barcode"><svg viewBox="0 0 24 24"><path d="M3 5h2v14H3zm3 0h1v14H6zm2 0h3v14H8zm4 0h1v14h-1zm2 0h2v14h-2zm3 0h1v14h-1zm2 0h2v14h-2z"/></svg><span>Штрихкод</span></button>
-      </div>
-      <input type="file" id="fileInput" accept="image/*" hidden>
-
-      <div id="props" class="props"></div>
-    </section>
-
-    <!-- ===== Шаблоны ===== -->
-    <section id="page-templates" class="page" aria-label="Шаблоны">
-      <div class="card">
-        <h2>Текущая наклейка</h2>
-        <div class="save-row">
-          <input id="tplName" type="text" placeholder="Название, например «Ценник»" maxlength="40">
-          <button type="button" id="tplSave" class="btn">Сохранить</button>
-        </div>
-        <div class="btn-row">
-          <button type="button" id="newLabel" class="btn ghost">Новая пустая</button>
-          <button type="button" id="downloadPng" class="btn ghost">Скачать картинку</button>
-        </div>
-      </div>
-      <h2 class="section-title">Мои шаблоны</h2>
-      <div id="tplList" class="tpl-list"></div>
-      <h2 class="section-title">Примеры</h2>
-      <div id="exampleList" class="tpl-list"></div>
-    </section>
-
-    <!-- ===== Настройки ===== -->
-    <section id="page-settings" class="page" aria-label="Настройки">
-      <!-- 1.1.0: общий аккаунт для всех моих сайтов (js/mm-account.js): шаблоны, наклейка и настройки — в облаке -->
-      <div class="card">
-        <h2>Аккаунт</h2>
-        <div id="acctBox"></div>
-      </div>
-
-      <div class="card">
-        <h2>Принтер</h2>
-        <div class="printer-box">
-          <div>
-            <div class="printer-name" id="printerName">Не подключён</div>
-            <div class="muted small" id="printerSub">Подключите принтер кабелем через переходник OTG</div>
-          </div>
-          <button type="button" id="connectBtn" class="btn">Подключить</button>
-        </div>
-        <div class="btn-row">
-          <button type="button" id="testPrint" class="btn ghost">Тестовая печать</button>
-          <button type="button" id="feedBtn" class="btn ghost">Прогнать наклейку</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Печать</h2>
-        <label class="field">
-          <span>Тип принтера</span>
-          <select id="setLang">
-            <option value="tspl">Для наклеек (TSPL)</option>
-            <option value="escpos">Чековый (ESC/POS)</option>
-          </select>
-          <small class="muted">Для наклеек — XP-365B, XP-420B, XP-470B, XP-236B и похожие. Чековые — XP-58, XP-80.</small>
-        </label>
-        <label class="field">
-          <span>Разрешение принтера</span>
-          <select id="setDpi">
-            <option value="203">203 dpi (почти все Xprinter)</option>
-            <option value="300">300 dpi</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Темнота печати: <b id="densityVal"></b></span>
-          <input id="setDensity" type="range" min="1" max="15" step="1">
-        </label>
-        <div class="tspl-only">
-          <label class="field">
-            <span>Скорость печати</span>
-            <select id="setSpeed">
-              <option value="">Как в принтере</option>
-              <option value="2">2 — медленно, чётче</option>
-              <option value="3">3</option>
-              <option value="4">4</option>
-              <option value="5">5 — быстро</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Промежуток между наклейками, мм</span>
-            <input id="setGap" type="number" inputmode="decimal" min="0" max="20" step="0.5">
-            <small class="muted">Обычно 2 мм. Для сплошной ленты без промежутков — 0.</small>
-          </label>
-        </div>
-        <div class="escpos-only">
-          <label class="field">
-            <span>Ширина бумаги</span>
-            <select id="setPaper">
-              <option value="58">58 мм (печатает 48 мм)</option>
-              <option value="80">80 мм (печатает 72 мм)</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Промотка после печати, строк</span>
-            <input id="setFeed" type="number" inputmode="numeric" min="0" max="20" step="1">
-          </label>
-          <label class="switch"><input type="checkbox" id="setCut"><span>Отрезать после печати (если есть нож)</span></label>
-        </div>
-        <div class="two">
-          <label class="field"><span>Сдвиг вправо, мм</span><input id="setOffX" type="number" inputmode="decimal" step="0.5" min="-10" max="10"></label>
-          <label class="field"><span>Сдвиг вниз, мм</span><input id="setOffY" type="number" inputmode="decimal" step="0.5" min="-10" max="10"></label>
-        </div>
-        <label class="switch"><input type="checkbox" id="setRotate"><span>Перевернуть на 180°</span></label>
-        <label class="switch"><input type="checkbox" id="setInvert"><span>Инвертировать цвета (если печатает негативом)</span></label>
-      </div>
-
-      <div class="card">
-        <h2>Вид</h2>
-        <div class="seg" id="themeSeg" role="radiogroup" aria-label="Тема">
-          <button type="button" data-theme="auto">Авто</button>
-          <button type="button" data-theme="light">Светлая</button>
-          <button type="button" data-theme="dark">Тёмная</button>
-        </div>
-      </div>
-
-      <div class="card help">
-        <h2>Инструкции</h2>
-        <details>
-          <summary>Как подключить принтер к телефону</summary>
-          <ol>
-            <li>Купите переходник <b>OTG</b>: с одной стороны штекер как у телефона (обычно USB-C), с другой — обычное гнездо USB. Стоит недорого, продаётся в любом магазине электроники.</li>
-            <li>Включите принтер в розетку и нажмите кнопку питания.</li>
-            <li>Вставьте USB-кабель принтера (тот, что идёт к компьютеру) в переходник, а переходник — в телефон.</li>
-            <li>Откройте этот сайт в <b>Google Chrome</b>. В Samsung Internet, Firefox и Яндекс Браузере печать по USB не работает.</li>
-            <li>Нажмите «Подключить», выберите принтер в списке и разрешите доступ.</li>
-            <li>Чтобы сайт открывался как приложение: меню Chrome <b>⋮</b> → «Добавить на главный экран». После этого в галерее появится «Поделиться → Мое_наклейки» — так можно сразу отправить фото на наклейку.</li>
-          </ol>
-          <p class="muted">На некоторых телефонах (Xiaomi, Realme, OPPO, OnePlus) OTG нужно включить: Настройки → «OTG» или «Дополнительные настройки → OTG».</p>
-        </details>
-        <details>
-          <summary>Если печать не получается</summary>
-          <ul>
-            <li><b>Принтер не появляется в списке</b> — проверьте, что принтер включён, и попробуйте другой переходник OTG. Включите OTG в настройках телефона.</li>
-            <li><b>«Принтер занят»</b> — закройте другие приложения для печати (например, приложение Xprinter), выньте и снова вставьте кабель.</li>
-            <li><b>Ничего не печатает</b> — поменяйте «Тип принтера». Некоторые модели (например, XP-365B) переключаются между режимом наклеек и режимом чеков.</li>
-            <li><b>Печатает со сдвигом или через одну наклейку</b> — проверьте размер наклейки и промежуток, затем сделайте калибровку: у большинства Xprinter при включённом принтере зажмите кнопку FEED на 2–3 секунды, пока не мигнёт лампочка, и отпустите. Принтер прогонит несколько наклеек и запомнит их размер. Точный способ — в инструкции к вашей модели.</li>
-            <li><b>Немного съезжает</b> — подвиньте печать полями «Сдвиг вправо» и «Сдвиг вниз».</li>
-            <li><b>Печатает чёрный прямоугольник или негатив</b> — включите «Инвертировать цвета».</li>
-            <li><b>Печать вверх ногами</b> — включите «Перевернуть на 180°».</li>
-            <li><b>Бледно</b> — увеличьте «Темноту печати» или уменьшите скорость.</li>
-          </ul>
-        </details>
-        <details>
-          <summary>О программе</summary>
-          <p><b>Мое_наклейки</b> <span id="aboutVer"></span> — печать термонаклеек на принтерах Xprinter с телефона по USB.</p>
-          <p class="muted small" id="changelog"></p>
-          <p class="muted small">QR-коды: QRCode for JavaScript © 2009 Kazuhiko Arase (лицензия MIT). «QR Code» — товарный знак DENSO WAVE INCORPORATED.</p>
-        </details>
-      </div>
-    </section>
-  </main>
-
-  <div class="printbar" id="printbar">
-    <div class="copies" aria-label="Количество копий">
-      <button type="button" id="copiesMinus" aria-label="Меньше копий">−</button>
-      <input id="copies" type="number" inputmode="numeric" min="1" max="999" value="1" aria-label="Копий">
-      <button type="button" id="copiesPlus" aria-label="Больше копий">+</button>
-    </div>
-    <button type="button" id="printBtn" class="btn primary big">Печать</button>
+<!-- ===== Выбор картинок ===== -->
+<div class="sheet full" id="picker" hidden>
+  <div class="sh-head">
+    <button class="ib" data-close aria-label="Закрыть">✕</button>
+    <div class="sh-title"><b id="pkTitle">Картинки на странице</b><small id="pkSub"></small></div>
+    <button class="ib" id="pkRescan" title="Искать ещё раз" aria-label="Искать ещё раз">⟳</button>
   </div>
+  <div class="chips" id="pkChips"></div>
+  <div class="pkTools">
+    <label class="sw"><input type="checkbox" id="pkSmall" checked><span>Скрыть мелкие и значки</span></label>
+    <select id="pkSort" aria-label="Порядок"><option value="page">Как на странице</option><option value="big">Сначала крупные</option></select>
+  </div>
+  <div class="grid" id="pkGrid"></div>
+  <div class="pkEmpty" id="pkEmpty" hidden>Картинок не найдено. Попробуйте режим «Со скриптами сайта» в меню ⋮ или скриншот страницы.</div>
+  <div class="sh-foot">
+    <div class="row sm">
+      <button class="btn ghost" id="pkAll">Выбрать все</button>
+      <button class="btn ghost" id="pkNone">Снять</button>
+      <label class="sw"><input type="checkbox" id="pkPage"><span>+ скриншот страницы</span></label>
+    </div>
+    <button class="btn pri big" id="pkGo">Скачать</button>
+  </div>
+</div>
 
-  <nav class="tabs" aria-label="Разделы">
-    <button type="button" data-page="label" class="active"><svg viewBox="0 0 24 24"><path d="M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm0 2v10h16V7zm2 2h8v2H6zm0 4h5v2H6z"/></svg><span>Наклейка</span></button>
-    <button type="button" data-page="templates"><svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 1.5V8h4.5zM7 12h10v2H7zm0 4h7v2H7z"/></svg><span>Шаблоны</span></button>
-    <button type="button" data-page="settings"><svg viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zm8.4 2.3-1.7-.3a7 7 0 0 0-.7-1.7l1-1.4-1.6-1.6-1.4 1a7 7 0 0 0-1.7-.7l-.3-1.7h-2.2l-.3 1.7a7 7 0 0 0-1.7.7l-1.4-1-1.6 1.6 1 1.4a7 7 0 0 0-.7 1.7l-1.7.3v2.3l1.7.3c.2.6.4 1.2.7 1.7l-1 1.4 1.6 1.6 1.4-1c.5.3 1.1.6 1.7.7l.3 1.7h2.2l.3-1.7c.6-.2 1.2-.4 1.7-.7l1.4 1 1.6-1.6-1-1.4c.3-.5.6-1.1.7-1.7l1.7-.3z"/></svg><span>Настройки</span></button>
-  </nav>
+<!-- ===== Просмотр одной картинки ===== -->
+<div class="sheet full dark" id="preview" hidden>
+  <div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b id="pvName"></b><small id="pvInfo"></small></div><button class="ib" id="pvToggle" aria-label="Выбрать">✓</button></div>
+  <div class="pvBox"><img id="pvImg" alt="" referrerpolicy="no-referrer"></div>
+  <div class="sh-foot"><a class="btn" id="pvOpen" target="_blank" rel="noopener noreferrer">Открыть отдельно ↗</a></div>
+</div>
 
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+<!-- ===== Скачивание ===== -->
+<div class="sheet" id="work" hidden>
+  <div class="sh-head"><div class="sh-title"><b id="wkTitle">Скачиваю…</b><small id="wkSub"></small></div></div>
+  <div class="pbar"><i id="wkBar"></i></div>
+  <ol class="log" id="wkLog"></ol>
+  <div class="sh-foot"><button class="btn" id="wkStop">Остановить и сохранить, что есть</button></div>
+</div>
 
-  <script src="js/qrcode.js"></script>
-  <script src="js/barcode.js"></script>
-  <script src="js/printer.js"></script>
-  <script src="js/render.js"></script>
-  <script src="js/app.js"></script>
-  <script src="js/mm-account.js"></script>
-  <script>
-    /* Общий аккаунт: шаблоны (mn_templates), текущая наклейка (mn_design), настройки печати (mn_settings) и тема (mn_theme) */
-    MMAccount.setup({ app: "nakleyki", title: "Мое_наклейки", mount: "#acctBox",
-      ls: ["mn_templates", "mn_design", "mn_settings", "mn_theme"],
-      note: "Подключение к принтеру у каждого телефона своё." });
-  </script>
+<!-- ===== Куда сохранить ===== -->
+<div class="sheet" id="save" hidden>
+  <div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>Архив готов</b><small id="svSub"></small></div></div>
+  <div class="pad">
+    <div class="sum" id="svSum"></div>
+    <label class="fld"><span>Имя архива</span><input id="svName" type="text" spellcheck="false"></label>
+    <p class="cap">Куда сохранить:</p>
+    <div class="col">
+      <button class="btn pri big" id="svPick" hidden>📁 Выбрать папку и имя…</button>
+      <button class="btn big" id="svShare" hidden>📤 Отправить или сохранить в… (Диск, Файлы, Telegram)</button>
+      <button class="btn big" id="svDl">⬇ В «Загрузки»</button>
+    </div>
+    <p class="hint" id="svHint"></p>
+  </div>
+</div>
+
+<!-- ===== Вкладки ===== -->
+<div class="sheet" id="tabs" hidden>
+  <div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>Вкладки</b></div><button class="ib" id="tabNew" title="Новая вкладка" aria-label="Новая вкладка">＋</button></div>
+  <div class="list pad" id="tabList"></div>
+</div>
+
+<!-- ===== Меню ===== -->
+<div class="sheet" id="menu" hidden>
+  <div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>Меню</b><small id="mnUrl"></small></div></div>
+  <div class="pad">
+    <div class="menuGrid">
+      <button class="mi" data-act="newtab"><span>＋</span>Новая вкладка</button>
+      <button class="mi" data-act="home"><span>⌂</span>Главная</button>
+      <button class="mi" data-act="pageshot"><span>📷</span>Скриншот страницы</button>
+      <button class="mi" data-act="chrome"><span>↗</span>Открыть в Chrome</button>
+      <button class="mi" data-act="copy"><span>⧉</span>Копировать адрес</button>
+      <button class="mi" data-act="settings"><span>⚙</span>Настройки</button>
+    </div>
+    <p class="cap">Как показывать сайт (эта вкладка):</p>
+    <div class="seg" id="modeSeg">
+      <button data-mode="fast">Быстро<small>без скриптов</small></button>
+      <button data-mode="full">Полностью<small>со скриптами сайта</small></button>
+      <button data-mode="direct">Напрямую<small>как в Chrome</small></button>
+    </div>
+    <p class="hint" id="modeHint"></p>
+  </div>
+</div>
+
+<!-- ===== Настройки ===== -->
+<div class="sheet full" id="settings" hidden>
+  <div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>Настройки</b><small>Мое_граббер 1.0.0</small></div></div>
+  <div class="pad scroll">
+    <div class="card"><h3>Аккаунт</h3><div id="acctBox"></div></div>
+
+    <div class="card">
+      <h3>Браузер</h3>
+      <label class="fld"><span>Как показывать сайты</span>
+        <select id="stMode"><option value="fast">Быстро, без скриптов сайта</option><option value="full">Полностью, со скриптами сайта</option><option value="direct">Напрямую (как в Chrome)</option></select></label>
+      <label class="fld"><span>Поиск</span>
+        <select id="stSearch"><option value="bing">Bing</option><option value="ddg">DuckDuckGo</option><option value="google">Google</option><option value="yandex">Яндекс</option></select></label>
+      <div class="row"><button class="btn" id="stClearHist">Очистить историю</button><button class="btn" id="stClearBm">Удалить закладки</button></div>
+    </div>
+
+    <div class="card">
+      <h3>Скачивание</h3>
+      <label class="fld"><span>Фото сохраняются «как есть» (папка «Фото»). Ещё сделать копию в формате</span>
+        <select id="stConv"><option value="">Не нужно</option><option value="jpg">JPG</option><option value="png">PNG</option><option value="webp">WEBP</option></select></label>
+      <label class="fld"><span>Качество копии JPG/WEBP: <b id="stQv">92</b>%</span><input id="stQ" type="range" min="50" max="100" step="1"></label>
+      <label class="sw"><input type="checkbox" id="stShots"><span>Если фото не скачивается — сделать его скриншот (папка «Скриншоты»)</span></label>
+      <label class="fld"><span>«Мелкие» — меньше, пикселей</span><input id="stMin" type="number" min="0" max="2000" step="10"></label>
+      <label class="fld"><span>Скачивать одновременно</span><select id="stConc"><option>2</option><option>3</option><option>4</option><option>6</option></select></label>
+    </div>
+
+    <div class="card">
+      <h3>Прокси</h3>
+      <p class="cap">Через них открываются чужие сайты и фото. Одна строка — один прокси, вместо адреса пишется <code>{u}</code>.</p>
+      <textarea id="stProxies" rows="4" spellcheck="false"></textarea>
+      <div class="row"><button class="btn" id="stTest">Проверить</button><button class="btn ghost" id="stReset">Как было</button></div>
+      <ul class="tests" id="stTests"></ul>
+    </div>
+
+    <!-- Инструкции и ссылки — всегда внизу и свёрнуты -->
+    <details class="card help">
+      <summary>Инструкции и ссылки</summary>
+      <details><summary>Как скачать фото</summary>
+        <ol><li>Наберите адрес сайта или запрос в строке сверху (кнопка «Картинки» на главной ищет сразу фото).</li>
+        <li>Нажмите круглую кнопку «Фото» внизу справа — откроется список всех картинок страницы.</li>
+        <li>Отметьте нужные (по умолчанию отмечены все крупные), можно отфильтровать по формату: JPG, PNG, WEBP, GIF, SVG, AVIF…</li>
+        <li>«Скачать» — фото соберутся в ZIP, затем выберите, куда его сохранить.</li>
+        <li>Долгое нажатие на картинку на сайте сразу открывает выбор с ней одной.</li></ol></details>
+      <details><summary>Что внутри архива</summary>
+        <ul><li><b>Фото</b> — оригиналы «как есть», байт в байт как на сайте.</li>
+        <li><b>Скриншоты</b> — снимки тех фото, которые сайт не отдал (защита от скачивания).</li>
+        <li><b>Фото (JPG/PNG/WEBP)</b> — копии в выбранном формате, если включено в настройках.</li>
+        <li><b>Скриншот страницы</b> — снимок всей страницы, если отмечено.</li>
+        <li><b>список.txt</b> — откуда взят каждый файл; <b>не скачались.txt</b> — ссылки на то, что не удалось.</li></ul></details>
+      <details><summary>Как выбрать папку на телефоне</summary>
+        <p>Кнопка «Отправить или сохранить в…» открывает меню Android: можно выбрать «Файлы», Google Диск, Telegram и т. д.</p>
+        <p>Чтобы Chrome спрашивал папку и для «В „Загрузки“»: Chrome → ⋮ → Настройки → Скачанные файлы → «Спрашивать, где сохранять файлы».</p>
+        <p>На компьютере (Chrome, Edge) кнопка «Выбрать папку и имя…» открывает обычное окно сохранения.</p></details>
+      <details><summary>Почему сайт открылся не так или пусто</summary>
+        <p>«Быстро» показывает страницу без её скриптов: это быстро и надёжно, но сайты-приложения (Instagram, Pinterest и т. п.) могут быть пустыми. Тогда в меню ⋮ выберите «Полностью» или «Напрямую». В режиме «Напрямую» часть сайтов запрещает показ внутри другого сайта — откройте их в Chrome, скопируйте адрес нужного фото и вставьте сюда.</p>
+        <p>Если не открывается ничего — проверьте прокси в настройках («Проверить»).</p></details>
+      <details><summary>Установить как приложение</summary>
+        <p>Chrome → ⋮ → «Добавить на главный экран». После этого в Chrome в меню «Поделиться» появится «Мое_граббер» — ссылка сразу откроется здесь.</p></details>
+      <details><summary>Ссылки</summary>
+        <ul>
+          <li>Прокси: <a href="https://allorigins.win/" target="_blank" rel="noopener">allorigins.win</a>, <a href="https://corsproxy.io/" target="_blank" rel="noopener">corsproxy.io</a>, <a href="https://codetabs.com/cors-proxy/cors-proxy.html" target="_blank" rel="noopener">codetabs.com</a></li>
+          <li>Скриншоты: <a href="https://microlink.io/screenshot" target="_blank" rel="noopener">microlink.io</a> (около 50 бесплатных снимков в день), <a href="https://www.thum.io/" target="_blank" rel="noopener">thum.io</a>, WordPress mShots</li>
+          <li>Все версии: <a href="https://drakkkkon.github.io/maymani/grabber.html" target="_blank" rel="noopener">Мое_сайты → Мое_граббер</a></li>
+        </ul></details>
+    </details>
+  </div>
+</div>
+
+<script src="js/zip.js"></script>
+<script src="js/grab.js"></script>
+<script src="js/app.js"></script>
+<script src="js/mm-account.js"></script>
+<script>
+  /* Общий аккаунт: настройки, закладки и история — в облаке */
+  MMAccount.setup({ app: "grabber", title: "Мое_граббер", mount: "#acctBox",
+    ls: ["mg_settings", "mg_bookmarks", "mg_history"],
+    note: "Скачанные архивы в облако не уходят — только настройки, закладки и история." });
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function () {});
+</script>
 </body>
 </html>
