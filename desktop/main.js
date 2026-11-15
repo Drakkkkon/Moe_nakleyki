@@ -16,10 +16,17 @@ app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(
 
 // Обычный Chrome без «Electron» в заголовке — некоторые сайты иначе показывают упрощённую страницу или капчу
 function cleanUA(ua) { return ua.replace(/\s(Electron|moe-grabber|Мое_граббер)\/\S+/gi, ''); }
+// 1.4.1: один и тот же «паспорт» браузера везде — и в запросах, и внутри страницы (navigator.userAgent).
+// Раньше внутри страницы оставалось «Electron», и проверка Cloudflare («Подтвердите, что вы человек») не пропускала.
+const UA = cleanUA(app.userAgentFallback);
+app.userAgentFallback = UA;
 
+// Разрешения: всё, что нужно обычным сайтам и проверкам «вы не робот»; камера, микрофон, место и уведомления — нет
+const DENY = new Set(['media', 'geolocation', 'notifications', 'midi', 'midiSysex', 'hid', 'serial', 'usb', 'idle-detection', 'openExternal', 'pointerLock', 'keyboardLock', 'display-capture', 'speaker-selection']);
 function setupSession(ses) {
-  ses.setUserAgent(cleanUA(ses.getUserAgent()), 'ru-RU,ru,en-US,en');
-  ses.setPermissionRequestHandler((wc, perm, cb) => cb(['fullscreen', 'clipboard-sanitized-write'].includes(perm)));
+  ses.setUserAgent(UA);   // язык — как в Windows: одинаковый в запросах и внутри страницы
+  ses.setPermissionRequestHandler((wc, perm, cb) => cb(!DENY.has(perm)));
+  ses.setPermissionCheckHandler((wc, perm) => !DENY.has(perm));
 }
 
 function createWindow() {
@@ -49,6 +56,7 @@ function send(ch, data) { if (win && !win.isDestroyed()) win.webContents.send(ch
 
 // Страницы сайтов во вкладках (<webview>): всплывающие окна → новая вкладка, своё контекстное меню
 app.on('web-contents-created', (e, wc) => {
+  try { wc.setUserAgent(UA); } catch (err) {}
   if (wc.getType() !== 'webview') return;
   wc.setWindowOpenHandler(({ url }) => { send('open-tab', url); return { action: 'deny' }; });
   wc.on('before-input-event', (ev, input) => {
@@ -94,7 +102,7 @@ app.on('web-contents-created', (e, wc) => {
 // ---------- сеть без ограничений браузера ----------
 ipcMain.handle('fetch', async (e, url, referer) => {
   const ses = session.fromPartition(WEB);
-  const headers = { 'Accept': 'text/html,application/xhtml+xml,image/avif,image/webp,image/apng,image/*,*/*;q=0.8', 'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8' };
+  const headers = { 'Accept': 'text/html,application/xhtml+xml,image/avif,image/webp,image/apng,image/*,*/*;q=0.8' };
   async function go(withRef) {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 45000);
     try {
