@@ -131,12 +131,77 @@
     } catch (e) { return url; }
   }
 
+  // ---------- сведения о комиксе ----------
+  var META = null, metaUrl = '';
+  function decodeHtml(r) {
+    var cs = (/charset=([\w-]+)/i.exec(r.ct || '') || [])[1];
+    if (!cs) { var head = ''; for (var i = 0; i < Math.min(r.body.length, 4096); i++) head += String.fromCharCode(r.body[i]); cs = (/<meta[^>]+charset=["']?([\w-]+)/i.exec(head) || [])[1] || 'utf-8'; }
+    try { return new TextDecoder(cs.toLowerCase()).decode(r.body); } catch (e) { return new TextDecoder('utf-8').decode(r.body); }
+  }
+  async function gatherMeta(w, force) {
+    var u = I.curUrl();
+    if (META && metaUrl === u && !force) return META;
+    var M = null;
+    try { M = await w.executeJavaScript('(' + MG_META.SRC + ')(document, location.href)'); } catch (e) { M = null; }
+    if (!M) return null;
+    // страница самого комикса — там обычно описание, жанры и обложка
+    if (M.seriesUrl && M.seriesUrl.split('#')[0] !== u.split('#')[0]) {
+      try {
+        var r = await N.fetch(M.seriesUrl, u);
+        if (r && r.ok && r.body && /html/i.test(r.ct || 'text/html')) {
+          var doc = new DOMParser().parseFromString(decodeHtml(r), 'text/html');
+          M = MG_META.merge(M, MG_META.extract(doc, r.url || M.seriesUrl));
+        }
+      } catch (e) {}
+    }
+    META = M; metaUrl = u;
+    return M;
+  }
+  function looksComic(M) { return !!(M && (M.author || M.artist || M.genres.length || M.chapter || M.status)); }
+  function metaSummary(M) {
+    if (!M) return 'Сведения не найдены — впишите автора и название сами.';
+    var p = [];
+    if (M.genres.length) p.push('жанры: ' + M.genres.length); if (M.tags.length) p.push('теги: ' + M.tags.length);
+    if (M.desc) p.push('описание ✓'); if (M.cover) p.push('обложка ✓'); if (M.chapter) p.push('глава ' + M.chapter);
+    ['status', 'year', 'artist', 'translator', 'publisher', 'type', 'country', 'language', 'age'].forEach(function (k) { if (M[k]) p.push({ status: 'статус', year: 'год', artist: 'художник', translator: 'переводчик', publisher: 'издатель', type: 'тип', country: 'страна', language: 'язык', age: 'возраст' }[k] + ' ✓'); });
+    if (M.seriesUrl) p.push('страница комикса ✓');
+    return p.length ? 'Найдено: ' + p.join(', ') : 'Нашлось мало сведений — проверьте автора и название.';
+  }
+  function curName() { return MG_META.archiveName({ author: $('#pgAuthor').value.trim(), title: $('#pgTitle').value.trim() }); }
+  async function fillMeta(force) {
+    var w = wv(); if (!w) return;
+    $('#pgMetaSum').textContent = 'Ищу сведения на странице и на странице комикса…';
+    var M = await gatherMeta(w, force);
+    $('#pgAuthor').value = (M && M.author) || ''; $('#pgTitle').value = (M && M.title) || I.T().title || '';
+    $('#pgMetaSum').textContent = metaSummary(M);
+    await nameChanged();
+  }
+  async function nameChanged() {
+    $('#pgName').textContent = curName() + '.zip';
+    if (dirAuto) { var d = await N.downloadsDir(), sep = /\\/.test(d) ? '\\' : '/'; dir = d + sep + 'Мое_граббер' + sep + curName(); $('#pgDir').textContent = dir + ' (или с номером, если такая уже есть)'; }
+  }
+  // для обычного «Скачать в ZIP» из меню выбора картинок: имя Автор_Название и сведения о комиксе внутри
+  window.MG_zipName = async function () {
+    var w = wv(); if (!w) return null;
+    var M = await gatherMeta(w, false); if (!looksComic(M)) return null;
+    return MG_META.archiveName(M) + '.zip';
+  };
+  window.MG_zipExtra = async function (zip, pages) {
+    var w = wv(); if (!w) return;
+    var M = await gatherMeta(w, false); if (!looksComic(M)) return;
+    zip.add('ComicInfo.xml', MG_META.comicInfo(M, pages, I.version || ''));
+    zip.add('info.json', JSON.stringify(M, null, 2)); zip.add('info.txt', MG_META.infoText(M, pages));
+  };
+
   // ---------- окно ----------
   var panel = document.createElement('div'); panel.className = 'pager'; panel.hidden = true;
   panel.innerHTML =
     '<div class="pg-head"><b>📖 Авто-листание</b><span id="pgSite"></span><button class="ib x" id="pgClose" aria-label="Закрыть">✕</button></div>' +
     '<div class="pg-body" id="pgSetup">' +
       '<p class="hint">Откройте первую страницу главы. Программа сохранит самую тяжёлую картинку страницы, нажмёт «Следующая» и так дальше.</p>' +
+      '<div class="pg-meta"><div class="pg-mh"><b>Сведения о комиксе</b><button class="btn ghost" id="pgMetaRe">🔄 Найти снова</button></div>' +
+        '<div class="pg-grid"><label>Автор<input id="pgAuthor" placeholder="не найден"></label><label>Название<input id="pgTitle"></label></div>' +
+        '<small id="pgMetaSum" class="hint"></small><small class="hint">Архив: <b id="pgName"></b></small></div>' +
       '<div class="pg-row"><span>Кнопка «Следующая»:</span><b id="pgBtn">найду сама</b></div>' +
       '<div class="row sm"><button class="btn" id="pgPick">👆 Указать на странице</button><button class="btn ghost" id="pgAuto">Искать самой</button><button class="btn ghost" id="pgTest">Проверить</button></div>' +
       '<label class="pg-r"><input type="radio" name="pgStop" value="chapter"> До конца главы</label>' +
@@ -155,13 +220,6 @@
   document.body.appendChild(panel);
 
   var run = null, dir = '', dirAuto = true;
-  async function defaultDir() {
-    var d = await N.downloadsDir(), u = I.curUrl(), now = new Date();
-    var title = (I.T().title || host(u) || 'комикс').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 50);
-    var sep = /\\/.test(d) ? '\\' : '/';
-    var p2 = function (x) { return String(x).padStart(2, '0'); };
-    return d + sep + 'Мое_граббер' + sep + title + ' ' + now.getFullYear() + '-' + p2(now.getMonth() + 1) + '-' + p2(now.getDate()) + ' ' + p2(now.getHours()) + '-' + p2(now.getMinutes());
-  }
   async function open() {
     var u = I.curUrl(); if (!u || !wv()) { I.toast('Сначала откройте первую страницу комикса'); return; }
     $('#pgSetup').hidden = !!run && !run.done ? true : false; $('#pgRun').hidden = !(run && !run.done);
@@ -169,9 +227,11 @@
     var d = siteBtn(host(u)); $('#pgBtn').textContent = d ? '«' + (d.text || d.id || d.tag) + '» (указана)' : 'найду сама';
     panel.querySelectorAll('[name=pgStop]').forEach(function (r) { r.checked = r.value === CFG.stop; });
     $('#pgMax').value = CFG.max; $('#pgDelay').value = CFG.delay; $('#pgArrow').checked = !!CFG.arrow; $('#pgZip').checked = !!CFG.zip;
-    if (dirAuto || !dir) { dir = await defaultDir(); dirAuto = true; }
-    $('#pgDir').textContent = dir;
+    if (!dir) dirAuto = true;
     panel.hidden = false;
+    if (dirAuto) $('#pgDir').textContent = '…';
+    else $('#pgDir').textContent = dir;
+    fillMeta(false);
   }
   function readCfg() {
     var r = panel.querySelector('[name=pgStop]:checked'); CFG.stop = r ? r.value : 'chapter';
@@ -179,6 +239,8 @@
     CFG.arrow = $('#pgArrow').checked; CFG.zip = $('#pgZip').checked; saveCfg();
   }
   $('#pgClose').onclick = function () { panel.hidden = true; };
+  $('#pgMetaRe').onclick = function () { fillMeta(true); };
+  $('#pgAuthor').oninput = $('#pgTitle').oninput = function () { nameChanged(); };
   $('#pgPick').onclick = async function () {
     var w = wv(); if (!w) return;
     panel.classList.add('dim'); I.toast('Щёлкните по кнопке «Следующая» на странице', true);
@@ -193,12 +255,18 @@
     var res = await findNext(w, true);
     I.toast((img ? 'Картинка: ' + (img.w || '?') + '×' + (img.h || '?') + ', ' + fmt(img.bytes.length) : 'Картинка не найдена') + ' · ' + (res ? 'Дальше: ' + res.how + (res.href ? ' → ' + res.href.replace(/^https?:\/\//, '').slice(0, 60) : '') : 'кнопка «Следующая» не найдена'), true);
   };
-  $('#pgDirBtn').onclick = async function () { var p = await N.pickDir(dir); if (p) { dir = p; dirAuto = false; $('#pgDir').textContent = dir; } };
-  $('#pgStart').onclick = function () { readCfg(); start(); };
+  $('#pgDirBtn').onclick = async function () { var p = await N.pickDir(dir.replace(/[\\/][^\\/]*$/, '')); if (p) { dir = p; dirAuto = false; $('#pgDir').textContent = dir; } };
+  $('#pgStart').onclick = async function () {
+    readCfg();
+    var M = Object.assign({ genres: [], tags: [], extra: {} }, META || {}, { author: $('#pgAuthor').value.trim(), title: $('#pgTitle').value.trim() || (META && META.title) || I.T().title || '' });
+    var name = curName();
+    if (dirAuto) { var d = await N.downloadsDir(), sep = /\\/.test(d) ? '\\' : '/'; dir = await N.uniqueDir(d + sep + 'Мое_граббер' + sep + name); }
+    start(M);
+  };
   $('#pgPause').onclick = function () { if (!run || run.done) return; run.paused = !run.paused; this.textContent = run.paused ? '▶ Дальше' : '⏸ Пауза'; state(run.paused ? 'Пауза' : 'Продолжаю…'); };
   $('#pgStop').onclick = function () { if (run && !run.done) { run.stop = 'остановлено вами'; run.paused = false; } };
   $('#pgOpen').onclick = function () { if (run && run.dir) N.openPath(run.dir); };
-  $('#pgBack').onclick = function () { if (run && !run.done) return; $('#pgRun').hidden = true; $('#pgSetup').hidden = false; dirAuto = true; open(); };
+  $('#pgBack').onclick = function () { if (run && !run.done) return; $('#pgRun').hidden = true; $('#pgSetup').hidden = false; dirAuto = true; META = null; open(); };
   function state(t) { $('#pgState').textContent = t; }
   function logLine(t, cls) { var li = document.createElement('li'); li.textContent = t; if (cls) li.className = cls; var l = $('#pgLog'); l.appendChild(li); l.scrollTop = l.scrollHeight; }
 
@@ -209,13 +277,16 @@
     try { return await w.executeJavaScript('(' + src + ')(' + JSON.stringify(D) + ')'); } catch (e) { return null; }
   }
 
-  async function start() {
+  async function start(M) {
     var w = wv(); if (!w) { I.toast('Откройте страницу во вкладке'); return; }
     $('#pgSetup').hidden = true; $('#pgRun').hidden = false; $('#pgLog').innerHTML = ''; $('#pgThumb').removeAttribute('src');
     $('#pgPause').textContent = '⏸ Пауза';
     var tab = I.T();
-    run = { n: 0, dir: dir, files: [], stop: '', paused: false, done: false, startKey: chapterKey(I.curUrl()), seen: {}, lastHash: '', total: 0, list: [] };
+    run = { meta: M, n: 0, dir: dir, files: [], stop: '', paused: false, done: false, startKey: chapterKey(I.curUrl()), seen: {}, lastHash: '', total: 0, list: [] };
     var R = run;
+    // страница ещё грузится — дождаться, чтобы не сохранить картинку с прежней страницы
+    try { if (w.isLoading()) { state('Жду, пока страница загрузится…'); await waitLoad(w, 20000); } } catch (e) {}
+    R.firstUrl = I.curUrl();
     logLine('Папка: ' + dir);
     while (!R.stop) {
       while (R.paused && !R.stop) await sleep(300);
@@ -268,10 +339,24 @@
     }
     // конец
     logLine('■ ' + R.stop, 'shot');
+    // сведения о комиксе: ComicInfo.xml (его читает My_topsecret и другие читалки), info.json, info.txt, обложка
+    var extraFiles = [];
+    if (R.n && R.meta) {
+      var Mx = Object.assign({}, R.meta, { url: R.meta.url || R.firstUrl });
+      extraFiles.push({ name: 'ComicInfo.xml', bytes: new TextEncoder().encode(MG_META.comicInfo(Mx, R.n, I.version || '')) });
+      extraFiles.push({ name: 'info.json', bytes: new TextEncoder().encode(JSON.stringify(Mx, null, 2)) });
+      extraFiles.push({ name: 'info.txt', bytes: new TextEncoder().encode(MG_META.infoText(Mx, R.n)) });
+      if (Mx.cover) {
+        try { var cr = await N.fetch(Mx.cover, Mx.seriesUrl || Mx.url); if (cr && cr.ok && cr.body) { var ct = Grab.sniff(cr.body); if (ct) extraFiles.push({ name: '_info/cover.' + ct.ext, bytes: cr.body, sub: '_info', file: 'cover.' + ct.ext }); } } catch (e) {}
+      }
+      var sep2 = /\\/.test(R.dir) ? '\\' : '/';
+      for (var q = 0; q < extraFiles.length; q++) { var f = extraFiles[q]; try { await N.writeFile(f.sub ? R.dir + sep2 + f.sub : R.dir, f.file || f.name, f.bytes); } catch (e) {} }
+      logLine('Сведения о комиксе: ' + (Mx.author || 'автор не найден') + ' — ' + (Mx.title || '') + (extraFiles.some(function (f) { return f.sub; }) ? ' (+ обложка)' : ''), 'ok');
+    }
     if (R.list.length) { try { await N.writeFile(R.dir, 'список.txt', new TextEncoder().encode('Мое_граббер — авто-листание\n' + new Date().toLocaleString('ru-RU') + '\nОстановка: ' + R.stop + '\n\n' + R.list.join('\n') + '\n')); } catch (e) {} }
     if (CFG.zip && R.files.length) {
       state('Упаковываю ZIP…');
-      var z = new ZipWriter(); R.files.forEach(function (f) { z.add(f.name, f.bytes); });
+      var z = new ZipWriter(); R.files.forEach(function (f) { z.add(f.name, f.bytes); }); extraFiles.forEach(function (f) { z.add(f.name, f.bytes); });
       var blob = z.blob(), parts = R.dir.split(/[\\/]/), base = parts.pop(), parent = R.dir.slice(0, R.dir.length - base.length - 1);
       try { var zp = await N.writeFile(parent, base + '.zip', new Uint8Array(await blob.arrayBuffer())); logLine('ZIP: ' + zp, 'ok'); } catch (e) { logLine('ZIP не сохранился', 'bad'); }
       R.files = [];

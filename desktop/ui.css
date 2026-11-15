@@ -99,3 +99,7 @@
 .pager .log { max-height: 160px; padding-left: 22px; margin: 0; }
 .pager .row { margin: 0; }
 .pager .btn { min-height: 36px; padding: 6px 12px; }
+.pg-meta { border: 1px solid var(--ln); border-radius: 12px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: var(--bg); }
+.pg-mh { display: flex; align-items: center; justify-content: space-between; }
+.pg-mh .btn { min-height: 28px; padding: 2px 8px; font-size: 12.5px; }
+.pg-meta small { font-size: 12px; }

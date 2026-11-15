@@ -204,6 +204,7 @@ ipcMain.handle('write-file', (e, dir, name, bytes) => {
   fs.writeFileSync(p, Buffer.from(bytes)); return p;
 });
 ipcMain.handle('open-path', (e, p) => { if (p) shell.openPath(p); });
+ipcMain.handle('unique-dir', (e, p) => { let q = p, i = 2; while (fs.existsSync(q)) q = p + ' (' + (i++) + ')'; return q; });
 ipcMain.handle('open-external', (e, url) => { if (/^https?:/i.test(url)) shell.openExternal(url); });
 ipcMain.handle('version', () => app.getVersion());
 ipcMain.on('hostname', (e) => { e.returnValue = os.hostname(); });
