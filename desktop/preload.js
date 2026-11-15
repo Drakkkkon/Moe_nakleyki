@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('MGNative', {
   writeFile: (dir, name, bytes) => ipcRenderer.invoke('write-file', dir, name, bytes),
   openPath: (p) => ipcRenderer.invoke('open-path', p),
   uniqueDir: (p) => ipcRenderer.invoke('unique-dir', p),
+  pickFiles: (opts) => ipcRenderer.invoke('pick-files', opts || {}),
+  readFile: (p) => ipcRenderer.invoke('read-file', p),
+  savePdfAs: (name, bytes, dir) => ipcRenderer.invoke('save-pdf-as', name, bytes, dir || ''),
   upd: {
     info: () => ipcRenderer.invoke('upd-info'), check: () => ipcRenderer.invoke('upd-check'), download: () => ipcRenderer.invoke('upd-download'),
     restart: () => ipcRenderer.invoke('upd-restart'), rollback: () => ipcRenderer.invoke('upd-rollback'), openFolder: () => ipcRenderer.invoke('upd-open-folder'),

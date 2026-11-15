@@ -216,6 +216,7 @@
       '<div class="pg-now"><img id="pgThumb" alt=""><div><b id="pgCount">Страница 0</b><small id="pgState"></small><small id="pgLast"></small></div></div>' +
       '<ol class="log" id="pgLog"></ol>' +
       '<div class="row"><button class="btn" id="pgPause">⏸ Пауза</button><button class="btn" id="pgStop">⏹ Стоп</button><button class="btn" id="pgOpen">📂 Папка</button><button class="btn ghost" id="pgBack">Ещё раз</button></div>' +
+      '<button class="btn pri big" id="pgPdf" hidden>📄 Сделать PDF из этой главы</button>' +
     '</div>';
   document.body.appendChild(panel);
 
@@ -266,6 +267,16 @@
   $('#pgPause').onclick = function () { if (!run || run.done) return; run.paused = !run.paused; this.textContent = run.paused ? '▶ Дальше' : '⏸ Пауза'; state(run.paused ? 'Пауза' : 'Продолжаю…'); };
   $('#pgStop').onclick = function () { if (run && !run.done) { run.stop = 'остановлено вами'; run.paused = false; } };
   $('#pgOpen').onclick = function () { if (run && run.dir) N.openPath(run.dir); };
+  $('#pgPdf').onclick = async function () {
+    var R = run; if (!R || !R.done || !R.pages.length || !window.MG_pdf) return;
+    var b = this; b.disabled = true; b.textContent = 'Собираю PDF…';
+    try {
+      var parent = R.dir.replace(/[\\/][^\\/]*$/, '');
+      var r = await MG_pdf.pagesToPdf(R.pages, R.metaFinal || R.meta || {}, parent, false);
+      if (r) { logLine('PDF: ' + r.path, 'ok'); I.toast('PDF готов: ' + r.pages + ' стр.', true); N.showFile(r.path); }
+    } catch (e) { logLine('PDF не получился: ' + (e.message || e), 'bad'); }
+    b.disabled = false; b.textContent = '📄 Сделать PDF из этой главы';
+  };
   $('#pgBack').onclick = function () { if (run && !run.done) return; $('#pgRun').hidden = true; $('#pgSetup').hidden = false; dirAuto = true; META = null; open(); };
   function state(t) { $('#pgState').textContent = t; }
   function logLine(t, cls) { var li = document.createElement('li'); li.textContent = t; if (cls) li.className = cls; var l = $('#pgLog'); l.appendChild(li); l.scrollTop = l.scrollHeight; }
@@ -282,7 +293,8 @@
     $('#pgSetup').hidden = true; $('#pgRun').hidden = false; $('#pgLog').innerHTML = ''; $('#pgThumb').removeAttribute('src');
     $('#pgPause').textContent = '⏸ Пауза';
     var tab = I.T();
-    run = { meta: M, n: 0, dir: dir, files: [], stop: '', paused: false, done: false, startKey: chapterKey(I.curUrl()), seen: {}, lastHash: '', total: 0, list: [] };
+    $('#pgPdf').hidden = true;
+    run = { pages: [], meta: M, n: 0, dir: dir, files: [], stop: '', paused: false, done: false, startKey: chapterKey(I.curUrl()), seen: {}, lastHash: '', total: 0, list: [] };
     var R = run;
     // страница ещё грузится — дождаться, чтобы не сохранить картинку с прежней страницы
     try { if (w.isLoading()) { state('Жду, пока страница загрузится…'); await waitLoad(w, 20000); } } catch (e) {}
@@ -312,6 +324,7 @@
       try { await N.writeFile(R.dir, name, img.bytes); } catch (e) { R.stop = 'не удалось сохранить файл: ' + (e.message || e); break; }
       R.total += img.bytes.length; R.list.push(name + '  ←  ' + img.url + '  (страница ' + img.page + ')');
       if (CFG.zip) R.files.push({ name: name, bytes: img.bytes });
+      R.pages.push({ name: name, bytes: img.bytes });   // для кнопки «PDF»
       $('#pgThumb').src = URL.createObjectURL(new Blob([img.bytes]));
       $('#pgCount').textContent = 'Сохранено страниц: ' + R.n + ' · ' + fmt(R.total);
       $('#pgLast').textContent = name + ' · ' + (img.w ? img.w + '×' + img.h + ' · ' : '') + fmt(img.bytes.length);
@@ -342,7 +355,7 @@
     // сведения о комиксе: ComicInfo.xml (его читает My_topsecret и другие читалки), info.json, info.txt, обложка
     var extraFiles = [];
     if (R.n && R.meta) {
-      var Mx = Object.assign({}, R.meta, { url: R.meta.url || R.firstUrl });
+      var Mx = Object.assign({}, R.meta, { url: R.meta.url || R.firstUrl }); R.metaFinal = Mx;
       extraFiles.push({ name: 'ComicInfo.xml', bytes: new TextEncoder().encode(MG_META.comicInfo(Mx, R.n, I.version || '')) });
       extraFiles.push({ name: 'info.json', bytes: new TextEncoder().encode(JSON.stringify(Mx, null, 2)) });
       extraFiles.push({ name: 'info.txt', bytes: new TextEncoder().encode(MG_META.infoText(Mx, R.n)) });
@@ -364,6 +377,7 @@
     $('#pgCount').textContent = 'Сохранено страниц: ' + R.n + ' · ' + fmt(R.total);
     R.done = true;
     state('Готово: ' + R.stop);
+    $('#pgPdf').hidden = !(R.pages.length && window.MG_pdf);
     I.toast('Авто-листание: ' + R.n + ' стр. — ' + R.stop, true);
   }
 

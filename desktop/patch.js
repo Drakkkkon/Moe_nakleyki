@@ -45,6 +45,6 @@ rep("      else if (k === 'closetab') {", "      else if (k === 'closetab' && wi
 // обычное «Скачать в ZIP»: для страниц комиксов — имя Автор_Название и сведения о комиксе внутри архива
 rep("    var blob = zip.blob();\n    lastZip = {", "    if (window.MG_zipExtra) { try { await window.MG_zipExtra(zip, ok + shots); } catch (e) { console.warn(e); } }\n    var blob = zip.blob();\n    lastZip = {");
 rep("    openSave('Мое_граббер_' +", "    var cname = null; if (window.MG_zipName) { try { cname = await window.MG_zipName(); } catch (e) {} }\n    if (cname) openSave(cname); else openSave('Мое_граббер_' +");
-rep("    host: host, esc: esc, jget: jget, jset: jset\n  };", "    host: host, esc: esc, jget: jget, jset: jset, version: VERSION\n  };");
+rep("    host: host, esc: esc, jget: jget, jset: jset\n  };", "    host: host, esc: esc, jget: jget, jset: jset, version: VERSION, get lastZip() { return lastZip; }, zipName: zipName\n  };");
 fs.writeFileSync(file, s);
 console.log('patch.js: ok');

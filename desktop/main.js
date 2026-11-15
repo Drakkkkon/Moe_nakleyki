@@ -210,6 +210,18 @@ ipcMain.handle('write-file', (e, dir, name, bytes) => {
   fs.writeFileSync(p, Buffer.from(bytes)); return p;
 });
 ipcMain.handle('open-path', (e, p) => { if (p) shell.openPath(p); });
+// 1.9.0: PDF — выбрать архивы, прочитать файл, сохранить PDF
+ipcMain.handle('pick-files', async (e, opts) => {
+  const r = await dialog.showOpenDialog(win, { title: opts && opts.title || 'Выберите файлы', defaultPath: opts && opts.dir || app.getPath('downloads'),
+    filters: opts && opts.filters || [{ name: 'Архивы комиксов', extensions: ['zip', 'cbz'] }], properties: ['openFile', 'multiSelections'] });
+  return r.canceled ? [] : r.filePaths;
+});
+ipcMain.handle('read-file', (e, p) => fs.readFileSync(p));
+ipcMain.handle('save-pdf-as', async (e, name, bytes, dir) => {
+  const r = await dialog.showSaveDialog(win, { title: 'Сохранить PDF', defaultPath: path.join(dir || app.getPath('downloads'), name), filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+  if (r.canceled || !r.filePath) return null;
+  fs.writeFileSync(r.filePath, Buffer.from(bytes)); return r.filePath;
+});
 ipcMain.handle('unique-dir', (e, p) => { let q = p, i = 2; while (fs.existsSync(q)) q = p + ' (' + (i++) + ')'; return q; });
 ipcMain.handle('open-external', (e, url) => { if (/^https?:/i.test(url)) shell.openExternal(url); });
 ipcMain.handle('version', () => RUNNING_VERSION);

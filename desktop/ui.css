@@ -112,3 +112,10 @@
 .upd-row small { color: var(--mu); }
 .upd-notes { margin: 4px 0 0; padding-left: 20px; font-size: 13.5px; color: var(--mu); }
 #updCard .pbar { margin: 8px 0; }
+/* PDF из ZIP */
+#pdfSheet .pad.scroll { display: flex; flex-direction: column; gap: 10px; }
+.pdf-it .go { flex: 1; min-width: 0; padding: 8px 12px; display: flex; flex-direction: column; }
+.pdf-it .go b, .pdf-it .go small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#pdfOut .li .go { flex: 1; min-width: 0; padding: 8px 12px; display: flex; flex-direction: column; }
+#pdfOut .li .btn { min-height: 32px; padding: 4px 10px; }
+#pdfSheet .card .pg-r { margin: 6px 0; }
