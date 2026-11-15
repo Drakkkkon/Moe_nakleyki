@@ -8,6 +8,11 @@ const fs = require('fs');
 const os = require('os');
 const { pathToFileURL } = require('url');
 
+// 1.8.0: автообновление — если скачана более новая версия кода, запускается она (см. updater.js)
+const updater = require('./updater');
+if (updater.boot(__dirname)) return;
+const RUNNING_VERSION = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version; } catch (e) { return app.getVersion(); } })();
+
 // 1.5.0: интерфейс программы открывается по адресу mg://app/ (а не file://) — так работает вход в общий аккаунт
 protocol.registerSchemesAsPrivileged([{ scheme: 'mg', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 
@@ -43,6 +48,7 @@ function createWindow() {
   });
   win.removeMenu();
   win.loadURL('mg://app/index.html');
+  win.webContents.once('did-finish-load', () => updater.bootOk());
   // ссылки «открыть в Chrome» из интерфейса — во внешний браузер
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/i.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('mg:')) { e.preventDefault(); if (/^https?:/i.test(url)) shell.openExternal(url); } });
@@ -206,7 +212,7 @@ ipcMain.handle('write-file', (e, dir, name, bytes) => {
 ipcMain.handle('open-path', (e, p) => { if (p) shell.openPath(p); });
 ipcMain.handle('unique-dir', (e, p) => { let q = p, i = 2; while (fs.existsSync(q)) q = p + ' (' + (i++) + ')'; return q; });
 ipcMain.handle('open-external', (e, url) => { if (/^https?:/i.test(url)) shell.openExternal(url); });
-ipcMain.handle('version', () => app.getVersion());
+ipcMain.handle('version', () => RUNNING_VERSION);
 ipcMain.on('hostname', (e) => { e.returnValue = os.hostname(); });
 
 // Перенос закладок, истории и вкладок из версий 1.4.x (там интерфейс жил на file://)
@@ -244,6 +250,7 @@ app.whenReady().then(async () => {
     cb({ requestHeaders: d.requestHeaders });
   });
   await readOldStorage();
+  updater.setup(__dirname, () => win);
   createWindow();
 });
 app.on('window-all-closed', () => app.quit());

@@ -103,3 +103,12 @@
 .pg-mh { display: flex; align-items: center; justify-content: space-between; }
 .pg-mh .btn { min-height: 28px; padding: 2px 8px; font-size: 12.5px; }
 .pg-meta small { font-size: 12px; }
+/* автообновление */
+.updbar { position: fixed; z-index: 70; left: 50%; top: calc(var(--tsH) + 6px); transform: translateX(-50%); max-width: calc(100vw - 24px); display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 14px; background: var(--ac); color: #fff; border-radius: 12px; box-shadow: var(--sh); font-size: 13.5px; }
+.updbar .btn.sm { min-height: 30px; padding: 3px 12px; font-size: 13px; background: rgba(255,255,255,.18); border-color: transparent; color: #fff; }
+.updbar .btn.sm.pri { background: #fff; color: var(--ac); }
+.updbar .x { color: #fff; width: 28px; height: 28px; font-size: 13px; }
+.upd-row { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+.upd-row small { color: var(--mu); }
+.upd-notes { margin: 4px 0 0; padding-left: 20px; font-size: 13.5px; color: var(--mu); }
+#updCard .pbar { margin: 8px 0; }

@@ -20,6 +20,11 @@ contextBridge.exposeInMainWorld('MGNative', {
   writeFile: (dir, name, bytes) => ipcRenderer.invoke('write-file', dir, name, bytes),
   openPath: (p) => ipcRenderer.invoke('open-path', p),
   uniqueDir: (p) => ipcRenderer.invoke('unique-dir', p),
+  upd: {
+    info: () => ipcRenderer.invoke('upd-info'), check: () => ipcRenderer.invoke('upd-check'), download: () => ipcRenderer.invoke('upd-download'),
+    restart: () => ipcRenderer.invoke('upd-restart'), rollback: () => ipcRenderer.invoke('upd-rollback'), openFolder: () => ipcRenderer.invoke('upd-open-folder'),
+    onProgress: (fn) => ipcRenderer.on('upd-progress', (e, d) => fn(d))
+  },
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   version: () => ipcRenderer.invoke('version'),
   on: (ch, fn) => { if (['open-tab', 'ctx', 'key', 'bm-link'].includes(ch)) ipcRenderer.on(ch, (e, d) => fn(d)); }
