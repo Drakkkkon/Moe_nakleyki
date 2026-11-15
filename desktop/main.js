@@ -2,9 +2,14 @@
    Внутри настоящий Chromium: сайты открываются как в Chrome, без прокси; фото и страницы скачиваются напрямую,
    скриншоты делает сама программа, сохранение — обычным окном Windows. */
 'use strict';
-const { app, BrowserWindow, ipcMain, session, dialog, shell, Menu, webContents, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, session, dialog, shell, Menu, webContents, clipboard, nativeImage, protocol, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const { pathToFileURL } = require('url');
+
+// 1.5.0: интерфейс программы открывается по адресу mg://app/ (а не file://) — так работает вход в общий аккаунт
+protocol.registerSchemesAsPrivileged([{ scheme: 'mg', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 
 const WEB = 'persist:web';
 let win = null;
@@ -37,20 +42,33 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), webviewTag: true, contextIsolation: true, nodeIntegration: false, spellcheck: false }
   });
   win.removeMenu();
-  win.loadFile(path.join(__dirname, 'index.html'));
+  win.loadURL('mg://app/index.html');
   // ссылки «открыть в Chrome» из интерфейса — во внешний браузер
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/i.test(url)) shell.openExternal(url); return { action: 'deny' }; });
-  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('file:')) { e.preventDefault(); shell.openExternal(url); } });
+  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('mg:')) { e.preventDefault(); if (/^https?:/i.test(url)) shell.openExternal(url); } });
   win.webContents.on('before-input-event', (e, input) => {
     if (input.type !== 'keyDown') return;
-    if (input.key === 'F12') win.webContents.toggleDevTools();
-    if (input.key === 'F5' || (input.control && input.key.toLowerCase() === 'r')) { e.preventDefault(); send('key', 'reload'); }
-    if (input.control && input.key.toLowerCase() === 'l') { e.preventDefault(); send('key', 'address'); }
-    if (input.control && input.key.toLowerCase() === 't') { e.preventDefault(); send('key', 'newtab'); }
-    if (input.control && input.key.toLowerCase() === 'w') { e.preventDefault(); send('key', 'closetab'); }
-    if (input.alt && input.key === 'ArrowLeft') send('key', 'back');
-    if (input.alt && input.key === 'ArrowRight') send('key', 'forward');
+    if (input.key === 'F12') { win.webContents.toggleDevTools(); return; }
+    const k = keyAction(input); if (k) { e.preventDefault(); send('key', k); }
   });
+}
+// Горячие клавиши как в Chrome (и в окне программы, и внутри страниц)
+function keyAction(input) {
+  const key = (input.key || '').toLowerCase(), c = input.control || input.meta;
+  if (key === 'f5' || (c && key === 'r')) return 'reload';
+  if (c && key === 'l') return 'address';
+  if (c && input.shift && key === 't') return 'reopen';
+  if (c && key === 't') return 'newtab';
+  if (c && (key === 'w' || key === 'f4')) return 'closetab';
+  if (c && key === 'h') return 'history';
+  if (c && key === 'd') return 'bookmark';
+  if (c && input.shift && key === 'o') return 'bookmarks';
+  if (c && input.shift && key === 'b') return 'bmbar';
+  if (c && key === 'tab') return input.shift ? 'prevtab' : 'nexttab';
+  if (c && /^[1-9]$/.test(key)) return 'tab' + key;
+  if (input.alt && input.key === 'ArrowLeft') return 'back';
+  if (input.alt && input.key === 'ArrowRight') return 'forward';
+  return '';
 }
 function send(ch, data) { if (win && !win.isDestroyed()) win.webContents.send(ch, data); }
 
@@ -61,13 +79,8 @@ app.on('web-contents-created', (e, wc) => {
   wc.setWindowOpenHandler(({ url }) => { send('open-tab', url); return { action: 'deny' }; });
   wc.on('before-input-event', (ev, input) => {
     if (input.type !== 'keyDown') return;
-    if (input.key === 'F5' || (input.control && input.key.toLowerCase() === 'r')) { ev.preventDefault(); send('key', 'reload'); }
-    if (input.control && input.key.toLowerCase() === 'l') { ev.preventDefault(); send('key', 'address'); }
-    if (input.control && input.key.toLowerCase() === 't') { ev.preventDefault(); send('key', 'newtab'); }
-    if (input.control && input.key.toLowerCase() === 'w') { ev.preventDefault(); send('key', 'closetab'); }
-    if (input.alt && input.key === 'ArrowLeft') { ev.preventDefault(); send('key', 'back'); }
-    if (input.alt && input.key === 'ArrowRight') { ev.preventDefault(); send('key', 'forward'); }
-    if (input.key === 'Escape' && wc.isLoading()) wc.stop();
+    if (input.key === 'Escape' && wc.isLoading()) { wc.stop(); return; }
+    const k = keyAction(input); if (k) { ev.preventDefault(); send('key', k); }
   });
   wc.on('context-menu', (ev, p) => {
     const items = [];
@@ -79,6 +92,7 @@ app.on('web-contents-created', (e, wc) => {
     }
     if (p.linkURL) {
       items.push({ label: 'Открыть ссылку в новой вкладке', click: () => send('open-tab', p.linkURL) });
+      items.push({ label: 'Добавить ссылку в избранное', click: () => send('bm-link', { url: p.linkURL, title: p.linkText || '' }) });
       items.push({ label: 'Копировать адрес ссылки', click: () => clipboard.writeText(p.linkURL) });
       items.push({ type: 'separator' });
     }
@@ -180,10 +194,43 @@ ipcMain.handle('save-downloads', async (e, name, bytes) => {
 ipcMain.handle('show-file', (e, p) => { if (p) shell.showItemInFolder(p); });
 ipcMain.handle('open-external', (e, url) => { if (/^https?:/i.test(url)) shell.openExternal(url); });
 ipcMain.handle('version', () => app.getVersion());
+ipcMain.on('hostname', (e) => { e.returnValue = os.hostname(); });
 
-app.whenReady().then(() => {
+// Перенос закладок, истории и вкладок из версий 1.4.x (там интерфейс жил на file://)
+let migrated = null;
+ipcMain.on('migrate-get', (e) => { e.returnValue = migrated; migrated = null; });
+async function readOldStorage() {
+  const flag = path.join(app.getPath('userData'), 'migrated-1.5.flag');
+  if (fs.existsSync(flag)) return;
+  try {
+    const old = path.join(app.getPath('userData'), 'old-storage.html');
+    fs.writeFileSync(old, '<!doctype html><title>x</title>');
+    const w = new BrowserWindow({ show: false, webPreferences: { javascript: true } });
+    await w.loadFile(old);
+    const data = await w.webContents.executeJavaScript('(() => { const o = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (/^mg_/.test(k)) o[k] = localStorage.getItem(k); } return o; })()');
+    w.destroy();
+    if (data && Object.keys(data).length) migrated = data;
+  } catch (err) {}
+  try { fs.writeFileSync(flag, new Date().toISOString()); } catch (err) {}
+}
+
+app.whenReady().then(async () => {
+  // файлы интерфейса: mg://app/… → папка программы
+  protocol.handle('mg', (req) => {
+    const u = new URL(req.url);
+    let rel = decodeURIComponent(u.pathname).replace(/^\/+/, '') || 'index.html';
+    const file = path.normalize(path.join(__dirname, rel));
+    if (!file.startsWith(__dirname)) return new Response('no', { status: 403 });
+    return net.fetch(pathToFileURL(file).toString());
+  });
   setupSession(session.defaultSession);
   setupSession(session.fromPartition(WEB));
+  // общий аккаунт (Firebase): запросы как с моего сайта
+  session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['https://*.googleapis.com/*', 'https://*.firebaseio.com/*', 'wss://*.firebaseio.com/*', 'https://*.firebaseapp.com/*'] }, (d, cb) => {
+    d.requestHeaders.Referer = 'https://drakkkkon.github.io/Moe_nakleyki/';
+    cb({ requestHeaders: d.requestHeaders });
+  });
+  await readOldStorage();
   createWindow();
 });
 app.on('window-all-closed', () => app.quit());
