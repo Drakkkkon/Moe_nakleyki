@@ -1,5 +1,5 @@
 /* Мое_граббер — работа без интернета (оболочка сайта). Чужие сайты и фото не кешируются. */
-const CACHE = "mg-1.2.0";
+const CACHE = "mg-1.3.0";
 const ASSETS = ["./", "index.html", "css/style.css", "js/zip.js", "js/grab.js", "js/app.js", "js/mm-account.js",
   "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())); });

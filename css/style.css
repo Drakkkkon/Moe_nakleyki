@@ -179,3 +179,8 @@ pre.code { white-space: pre; overflow: auto; max-height: 260px; font: 11.5px/1.4
 @media (prefers-color-scheme: dark) { .note { background: #3a3220; color: #f3e2b0; border-color: #4d4329; } .note .x { color: #f3e2b0; } }
 main.noted #frameBox { top: var(--noteH, 58px); height: auto; bottom: 0; }
 main.noted #frameBox iframe { position: absolute; inset: 0; }
+/* диагностика */
+.dgRow { background: var(--sf); border: 1px solid var(--ln); border-radius: 12px; padding: 8px 10px; margin: 8px 0; display: flex; flex-direction: column; gap: 3px; }
+.dgRow b { font-size: 14px; }
+.dgC { font-size: 13px; line-height: 1.35; word-break: break-word; }
+.dgC.wait { color: var(--mu); }

@@ -6,7 +6,18 @@
 
   // 1.1.0: codetabs закрыт (июнь 2026), corsproxy.io бесплатно только для разработки — поставлены живые прокси.
   // {u} — адрес целиком закодированный, {raw} — как есть. r.jina.ai отдаёт страницу текстом (Markdown) — последний запасной.
+  // 1.3.0: больше прокси, опрашиваются почти одновременно. « #json» в конце — прокси отдаёт страницу внутри JSON
   var DEFAULT_PROXIES = [
+    'https://proxy.cors.dev/{raw}',
+    'https://api.allorigins.win/raw?url={u}',
+    'https://api.allorigins.win/get?url={u} #json',
+    'https://api.cors.lol/?url={u}',
+    'https://whateverorigin.org/get?url={u} #json',
+    'https://everyorigin.jwvbremen.nl/api/get?url={u} #json',
+    'https://corsproxy.io/?url={u}',
+    'https://r.jina.ai/{raw}'
+  ];
+  var V2_DEFAULTS = [
     'https://proxy.cors.dev/{raw}',
     'https://api.allorigins.win/raw?url={u}',
     'https://corsproxy.io/?url={u}',
@@ -23,7 +34,7 @@
   var G = {
     proxies: DEFAULT_PROXIES.slice(),
     DEFAULT_PROXIES: DEFAULT_PROXIES,
-    OLD_DEFAULTS: OLD_DEFAULTS,
+    OLD_DEFAULTS: OLD_DEFAULTS.concat(V2_DEFAULTS),
     timeout: 20000,
     good: 0, // номер прокси, который сработал последним — с него и начинаем
     fails: {} // сколько раз подряд прокси не сработал (в этом сеансе)
@@ -31,9 +42,19 @@
 
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function abs(u, base) { try { return new URL(u, base).href; } catch (e) { return null; } }
-  function proxyUrl(tpl, url) { return tpl.replace('{u}', encodeURIComponent(url)).replace('{raw}', url); }
+  function isJson(tpl) { return /\s#json\s*$/i.test(tpl); }
+  function proxyUrl(tpl, url) { return tpl.replace(/\s#json\s*$/i, '').trim().replace('{u}', encodeURIComponent(url)).replace('{raw}', url); }
+  // Достаём страницу из JSON-обёртки (allorigins/get, whateverorigin, everyorigin…)
+  function unwrapJson(text) {
+    var j; try { j = JSON.parse(text); } catch (e) { return { err: 'ответ не JSON' }; }
+    var c = j && (j.contents != null ? j.contents : j.html != null ? j.html : j.body != null ? j.body : j.data && (j.data.contents || j.data.html));
+    var code = j && j.status && (j.status.http_code || j.status.code);
+    if (typeof c !== 'string' || !c) return { err: (j && (j.error || j.Error || j.message)) ? String(j.error || j.Error || j.message).slice(0, 100) : 'пустой ответ' };
+    if (/^data:[^;]+;base64,/.test(c)) { try { c = decodeURIComponent(escape(atob(c.split(',')[1]))); } catch (e) {} }
+    return { text: c, code: code };
+  }
   function isReader(tpl) { return /r\.jina\.ai/.test(tpl); }
-  function pname(tpl) { try { return new URL(tpl.replace(/\{u\}|\{raw\}/g, 'x')).hostname.replace(/^(www|api|proxy)\./, ''); } catch (e) { return tpl; } }
+  function pname(tpl) { try { var u = new URL(proxyUrl(tpl, 'x')); return u.hostname.replace(/^(www|api|proxy)\./, '') + (isJson(tpl) ? ' (json)' : ''); } catch (e) { return tpl; } }
 
   function timedFetch(url, opts, ms) {
     var ctl = new AbortController(), t = setTimeout(function () { ctl.abort(); }, ms || G.timeout);
@@ -91,31 +112,103 @@
   }
 
   // ---------- страницы ----------
-  // Возвращает { html, url, via }
-  async function fetchPage(url) {
-    var errors = [];
+  // Один прокси: вернёт { html } или бросит ошибку с понятной причиной
+  async function tryProxy(tpl, url, ctl) {
+    var nm = pname(tpl), ms = isReader(tpl) ? 30000 : G.timeout;
+    var t = setTimeout(function () { ctl.abort(); }, ms);
     try {
-      var r = await timedFetch(url, { mode: 'cors' }, 10000);
-      if (r.ok) { var t = await r.text(); if (t && t.length > 50) return { html: t, url: r.url || url, via: 'напрямую' }; }
+      var res = await fetch(proxyUrl(tpl, url), { signal: ctl.signal, credentials: 'omit', referrerPolicy: 'no-referrer', headers: isReader(tpl) ? { 'X-Return-Format': 'markdown' } : undefined });
+      var ct = res.headers.get('content-type') || '';
+      if (res.ok && /^image\//i.test(ct)) return { image: true, url: url, via: tpl };
+      var html = await res.text();
+      if (!res.ok) throw new Error(nm + ': ' + res.status + (proxyError(html) ? ' ' + proxyError(html) : ''));
+      if (isJson(tpl)) {
+        var w = unwrapJson(html);
+        if (w.err) throw new Error(nm + ': ' + w.err);
+        if (w.code && w.code >= 400 && w.text.length < 3000) throw new Error(nm + ': сайт ответил ' + w.code);
+        html = w.text;
+      }
+      var bad = proxyError(html, url);
+      if (bad) throw new Error(nm + ': ' + bad);
+      if (isReader(tpl)) html = mdToHtml(html, url);
+      return { html: html, url: url, via: tpl, reader: isReader(tpl) };
+    } catch (e) {
+      if (e.name === 'AbortError') throw new Error(nm + ': ' + (ctl.won ? 'не понадобился' : 'не ответил вовремя'));
+      if (e instanceof TypeError) throw new Error(nm + ': нет связи или запрещено браузером');
+      throw e;
+    } finally { clearTimeout(t); }
+  }
+
+  // Страница: сначала напрямую, затем прокси «волнами» — каждые 2 секунды подключается следующий, побеждает первый успешный
+  async function fetchPage(url) {
+    try {
+      var r = await timedFetch(url, { mode: 'cors' }, 8000);
+      if (r.ok) { var t0 = await r.text(); if (t0 && t0.length > 50) return { html: t0, url: r.url || url, via: 'напрямую' }; }
     } catch (e) { /* обычно чужой сайт не разрешает — идём через прокси */ }
     var list = order(false);
-    for (var i = 0; i < list.length; i++) {
-      var tpl = list[i], nm = pname(tpl);
-      try {
-        var res = await timedFetch(proxyUrl(tpl, url), isReader(tpl) ? { headers: { 'X-Return-Format': 'markdown' } } : {}, isReader(tpl) ? 30000 : G.timeout);
-        var ct = res.headers.get('content-type') || '';
-        if (res.ok && /^image\//i.test(ct)) { remember(tpl); return { image: true, url: url, via: tpl }; }
-        var html = await res.text();
-        if (!res.ok) { failed(tpl); errors.push(nm + ': ' + res.status + (proxyError(html) ? ' ' + proxyError(html) : '')); continue; }
-        var bad = proxyError(html, url);
-        if (bad) { failed(tpl); errors.push(nm + ': ' + bad); continue; }
-        remember(tpl);
-        if (isReader(tpl)) html = mdToHtml(html, url);
-        return { html: html, url: url, via: tpl, reader: isReader(tpl) };
-      } catch (e) { failed(tpl); errors.push(nm + ': ' + (e.name === 'AbortError' ? 'не ответил вовремя' : 'нет связи')); }
+    if (!list.length) throw new Error('Страница не открылась.\nНет прокси в настройках');
+    // Запуск по цепочке: следующий прокси стартует, как только предыдущий отказал, или через 2,5 секунды ожидания
+    return await new Promise(function (resolve, reject) {
+      var errors = [], ctls = [], won = false, next = 0, finished = 0;
+      function launch() {
+        if (won || next >= list.length) return;
+        var tpl = list[next++], ctl = new AbortController(), started = false;
+        ctls.push(ctl);
+        var timer = setTimeout(function () { if (!started) { started = true; launch(); } }, 2500);
+        tryProxy(tpl, url, ctl).then(function (res) {
+          clearTimeout(timer);
+          if (won) return;
+          won = true; remember(tpl);
+          ctls.forEach(function (c) { if (c !== ctl) { c.won = true; c.abort(); } });
+          resolve(res);
+        }, function (e) {
+          clearTimeout(timer); finished++;
+          if (won) return;
+          failed(tpl); errors.push(e.message);
+          if (!started) { started = true; launch(); }
+          if (finished >= list.length) {
+            var err = new Error('Страница не открылась.\n' + errors.join('\n'));
+            err.codes = errors; reject(err);
+          }
+        });
+      }
+      launch();
+    });
+  }
+
+  // Диагностика: каждый прокси на нескольких сайтах — что отвечает на этом телефоне
+  async function diagnose(onRow) {
+    var tests = [
+      ['example.com', 'https://example.com/', /Example Domain/],
+      ['Википедия', 'https://ru.wikipedia.org/wiki/%D0%9A%D0%BE%D1%88%D0%BA%D0%B0', /Кошк|Felis/],
+      ['Google', 'https://www.google.com/search?q=cat&hl=ru&gbv=1', /<a [^>]*href="\/url\?|<h3/],
+      ['Bing', 'https://www.bing.com/search?q=cat', /b_algo|b_results/]
+    ];
+    var list = G.proxies.filter(Boolean);
+    await Promise.all(list.map(async function (tpl) {
+      var cells = [];
+      for (var k = 0; k < tests.length; k++) {
+        var t0 = Date.now(), ctl = new AbortController();
+        try {
+          var r = await tryProxy(tpl, tests[k][1], ctl);
+          cells.push(r.html && tests[k][2].test(r.html) ? { ok: true, ms: Date.now() - t0 } : { ok: false, why: r.image ? 'прислал картинку' : 'не та страница (капча/заглушка)' });
+        } catch (e) { cells.push({ ok: false, why: String(e.message).replace(/^[^:]+:\s*/, '').slice(0, 90) }); }
+        onRow(tpl, tests.map(function (x) { return x[0]; }), cells);
+      }
+    }));
+    // напрямую и запасные службы для фото
+    var extra = [];
+    async function probe(name, u, okFn) {
+      var t0 = Date.now();
+      try { var r = await timedFetch(u, { mode: 'cors' }, 20000); var ok = r.ok && await okFn(r); extra.push({ name: name, ok: ok, why: ok ? (Date.now() - t0) + ' мс' : 'ответ ' + r.status }); }
+      catch (e) { extra.push({ name: name, ok: false, why: e.name === 'AbortError' ? 'не ответил вовремя' : 'нет связи или запрещено' }); }
     }
-    var err = new Error('Страница не открылась.\n' + (errors.join('\n') || 'Нет прокси в настройках'));
-    err.codes = errors; throw err;
+    await Promise.all([
+      probe('Фото напрямую (Викисклад)', 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/120px-Cat03.jpg', async function (r) { return !!(await blobToImage(r)); }),
+      probe('Фото через wsrv.nl', 'https://wsrv.nl/?url=' + encodeURIComponent('https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/120px-Cat03.jpg'), async function (r) { return !!(await blobToImage(r)); }),
+      probe('Скриншоты microlink', 'https://api.microlink.io/?url=' + encodeURIComponent('https://example.com') + '&meta=false', async function (r) { var j = await r.json(); return j && j.status === 'success'; })
+    ]);
+    return extra;
   }
 
   // ---------- определение формата по первым байтам ----------
@@ -157,6 +250,7 @@
       try {
         var res = await timedFetch(proxyUrl(list[i], url), {}, ms || 15000);
         if (!res.ok) { failed(list[i]); continue; }
+        if (isJson(list[i])) { var w = unwrapJson(await res.text()); if (w.err || !/^data:image\//.test(w.text || '')) continue; res = await fetch(w.text); }
         var img = await blobToImage(res);
         if (img) { remember(list[i]); img.via = 'через ' + pname(list[i]); return img; }
       } catch (e) { failed(list[i]); }
@@ -440,6 +534,6 @@
     return n || 'картинка';
   }
 
-  Object.assign(G, { proxyError: proxyError, mdToHtml: mdToHtml, pname: pname, isReader: isReader, fetchPage: fetchPage, fetchImage: fetchImage, screenshot: screenshot, convert: convert, extract: extract, prepare: prepare, metaRefresh: metaRefresh, unwrap: unwrap, nameFrom: nameFrom, extOf: extOf, sniff: sniff, abs: abs, proxyUrl: proxyUrl, timedFetch: timedFetch });
+  Object.assign(G, { diagnose: diagnose, isJson: isJson, proxyError: proxyError, mdToHtml: mdToHtml, pname: pname, isReader: isReader, fetchPage: fetchPage, fetchImage: fetchImage, screenshot: screenshot, convert: convert, extract: extract, prepare: prepare, metaRefresh: metaRefresh, unwrap: unwrap, nameFrom: nameFrom, extOf: extOf, sniff: sniff, abs: abs, proxyUrl: proxyUrl, timedFetch: timedFetch });
   window.Grab = G;
 })();

@@ -13,7 +13,7 @@
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<!-- Мое_граббер 1.2.0 -->
+<!-- Мое_граббер 1.3.0 -->
 <header class="bar">
   <button class="ib" id="bBack" title="Назад" aria-label="Назад">‹</button>
   <button class="ib" id="bFwd" title="Вперёд" aria-label="Вперёд">›</button>
@@ -52,6 +52,7 @@
       <button class="btn pri" id="errRetry">Повторить</button>
       <button class="btn" id="errDirect">Открыть напрямую (один раз)</button>
       <button class="btn" id="errChrome">В Chrome ↗</button>
+      <button class="btn" id="errDiag">🩺 Диагностика</button>
     </div>
     <p class="hint">Даже если страница не показалась, кнопка «Фото» всё равно может найти картинки — или вставьте прямую ссылку на фото.</p>
   </section>
@@ -115,6 +116,12 @@
   </div>
 </div>
 
+<!-- ===== Диагностика ===== -->
+<div class="sheet full" id="diag" hidden>
+  <div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>Диагностика</b><small id="dgState">Какие прокси работают на этом телефоне</small></div><button class="ib" id="dgRun" title="Ещё раз" aria-label="Ещё раз">⟳</button></div>
+  <div class="pad scroll"><div id="dgRows"></div><h3 class="cap">Фото и скриншоты</h3><div id="dgExtra"></div></div>
+</div>
+
 <!-- ===== Вкладки ===== -->
 <div class="sheet" id="tabs" hidden>
   <div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>Вкладки</b></div><button class="ib" id="tabNew" title="Новая вкладка" aria-label="Новая вкладка">＋</button></div>
@@ -145,7 +152,7 @@
 
 <!-- ===== Настройки ===== -->
 <div class="sheet full" id="settings" hidden>
-  <div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>Настройки</b><small>Мое_граббер 1.2.0</small></div></div>
+  <div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>Настройки</b><small>Мое_граббер 1.3.0</small></div></div>
   <div class="pad scroll">
     <div class="card"><h3>Аккаунт</h3><div id="acctBox"></div></div>
 
@@ -172,7 +179,7 @@
       <h3>Прокси</h3>
       <p class="cap">Через них открываются чужие сайты и фото, сверху вниз по очереди. Одна строка — один прокси, вместо адреса пишется <code>{u}</code>. Бесплатные общие прокси бывают перегружены — надёжнее всего свой: <a href="#" id="cfHelpLink">как сделать за 5 минут</a>.</p>
       <textarea id="stProxies" rows="4" spellcheck="false"></textarea>
-      <div class="row"><button class="btn" id="stTest">Проверить</button><button class="btn ghost" id="stReset">Как было</button></div>
+      <div class="row"><button class="btn pri" id="stDiag">🩺 Диагностика</button><button class="btn" id="stTest">Проверить</button><button class="btn ghost" id="stReset">Как было</button></div>
       <ul class="tests" id="stTests"></ul>
     </div>
 

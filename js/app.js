@@ -1,7 +1,7 @@
-/* Мое_граббер 1.2.0 — интерфейс: вкладки, адресная строка, выбор картинок, скачивание в ZIP, сохранение */
+/* Мое_граббер 1.3.0 — интерфейс: вкладки, адресная строка, выбор картинок, скачивание в ZIP, сохранение */
 (function () {
   'use strict';
-  var VERSION = '1.2.0';
+  var VERSION = '1.3.0';
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -11,10 +11,10 @@
   function host(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return ''; } }
   function plural(n, a, b, c) { var m = n % 100, k = n % 10; return n + ' ' + (m > 10 && m < 15 ? c : k === 1 ? a : k >= 2 && k <= 4 ? b : c); }
 
-  var DEF = { sv: 3, mode: 'fast', search: 'google', conv: '', q: 92, shots: true, min: 100, conc: 4, proxies: Grab.DEFAULT_PROXIES.slice() };
+  var DEF = { sv: 4, mode: 'fast', search: 'google', conv: '', q: 92, shots: true, min: 100, conc: 4, proxies: Grab.DEFAULT_PROXIES.slice() };
   var STORED = jget('mg_settings', null) || {};
   var S = Object.assign({}, DEF, STORED);
-  S.sv = STORED.sv || (Object.keys(STORED).length ? 1 : 2);
+  S.sv = STORED.sv || (Object.keys(STORED).length ? 1 : DEF.sv);
   if (!Array.isArray(S.proxies) || !S.proxies.length) S.proxies = DEF.proxies.slice();
   // 1.1.0: поиск по умолчанию — Google; старый набор прокси (codetabs закрыт) меняем на новый, свои прокси сохраняем
   if ((S.sv || 1) < 2) {
@@ -23,8 +23,15 @@
     S.proxies = own.concat(DEF.proxies);
     S.sv = 2; try { localStorage.setItem('mg_settings', JSON.stringify(S)); } catch (e) {}
   }
+  // 1.3.0: новый набор прокси (свои, добавленные вручную, остаются сверху)
+  if ((S.sv || 1) < 4) {
+    var mine = S.proxies.filter(function (p) { return Grab.OLD_DEFAULTS.indexOf(p) < 0 && DEF.proxies.indexOf(p) < 0; });
+    S.proxies = mine.concat(DEF.proxies);
+    try { localStorage.setItem('mg_settings', JSON.stringify(Object.assign({}, S, { sv: Math.max(S.sv || 1, 3) }))); } catch (e) {}
+  }
   var FIX_DIRECT = S.sv < 3; // 1.2.0: «Напрямую» больше не залипает у вкладок
-  if (FIX_DIRECT) { if (S.mode === 'direct') S.mode = 'fast'; S.sv = 3; try { localStorage.setItem('mg_settings', JSON.stringify(S)); } catch (e) {} }
+  if (FIX_DIRECT && S.mode === 'direct') S.mode = 'fast';
+  if (S.sv < 4) { S.sv = 4; try { localStorage.setItem('mg_settings', JSON.stringify(S)); } catch (e) {} }
   Grab.proxies = S.proxies;
   function saveS() { jset('mg_settings', S); Grab.proxies = S.proxies; }
 
@@ -525,7 +532,7 @@
   bindSet('#stConc', 'conc', function (el) { return +el.value; });
   $('#stProxies').addEventListener('change', function () {
     var l = this.value.split('\n').map(function (s) { return s.trim(); }).filter(function (s) { return /^https?:\/\//.test(s); });
-    l = l.map(function (s) { return /\{u\}|\{raw\}/.test(s) ? s : s + '{u}'; });
+    l = l.map(function (s) { return /\{u\}|\{raw\}/.test(s) ? s : s.replace(/\s#json\s*$/i, '') + '{u}' + (/\s#json\s*$/i.test(s) ? ' #json' : ''); });
     S.proxies = l.length ? l : DEF.proxies.slice(); this.value = S.proxies.join('\n'); saveS();
   });
   $('#stReset').addEventListener('click', function () { S.proxies = DEF.proxies.slice(); $('#stProxies').value = S.proxies.join('\n'); saveS(); toast('Прокси как было'); });
@@ -547,6 +554,28 @@
     var code = $('#cfCode').textContent;
     (navigator.clipboard ? navigator.clipboard.writeText(code) : Promise.reject()).then(function () { toast('Код скопирован'); }, function () { var r = document.createRange(); r.selectNodeContents($('#cfCode')); var sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('Выделено — скопируйте'); });
   });
+  // ---------- диагностика ----------
+  async function runDiag() {
+    openSheet('diag');
+    var box = $('#dgRows'), ex = $('#dgExtra'); box.innerHTML = ''; ex.innerHTML = '';
+    $('#dgState').textContent = 'Проверяю… (до минуты)'; $('#dgRun').disabled = true;
+    var rows = {};
+    var extra = await Grab.diagnose(function (tpl, names, cells) {
+      var id = btoa(unescape(encodeURIComponent(tpl))).replace(/[^a-z0-9]/gi, '');
+      var tr = rows[id]; if (!tr) { tr = rows[id] = document.createElement('div'); tr.className = 'dgRow'; box.appendChild(tr); }
+      tr.innerHTML = '<b>' + esc(Grab.pname(tpl)) + '</b>' + names.map(function (n, i) {
+        var c = cells[i]; if (!c) return '<span class="dgC wait">' + esc(n) + ': …</span>';
+        return '<span class="dgC ' + (c.ok ? 'ok' : 'bad') + '">' + (c.ok ? '✓ ' : '✕ ') + esc(n) + (c.ok ? ' · ' + c.ms + ' мс' : ' — ' + esc(c.why)) + '</span>';
+      }).join('');
+    });
+    ex.innerHTML = extra.map(function (e) { return '<div class="dgC ' + (e.ok ? 'ok' : 'bad') + '">' + (e.ok ? '✓ ' : '✕ ') + esc(e.name) + ' — ' + esc(e.why) + '</div>'; }).join('');
+    var good = $$('#dgRows .dgC.ok').length;
+    $('#dgState').textContent = good ? 'Готово. Рабочих проверок: ' + good + '. Сделайте скриншот и пришлите его в чат с Claude.' : 'Ни один прокси не открыл ни одного сайта. Пришлите скриншот в чат с Claude — и, скорее всего, нужен свой прокси (Настройки → Инструкции).';
+    $('#dgRun').disabled = false;
+  }
+  $('#dgRun').addEventListener('click', runDiag);
+  $('#stDiag').addEventListener('click', runDiag);
+  $('#errDiag').addEventListener('click', runDiag);
   $('#stClearHist').addEventListener('click', function () { jset('mg_history', []); toast('История очищена'); renderHome(); });
   $('#stClearBm').addEventListener('click', function () { if (confirm('Удалить все закладки?')) { jset('mg_bookmarks', []); toast('Закладки удалены'); renderHome(); } });
 
