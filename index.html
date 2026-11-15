@@ -13,7 +13,7 @@
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<!-- Мое_граббер 1.0.0 -->
+<!-- Мое_граббер 1.1.0 -->
 <header class="bar">
   <button class="ib" id="bBack" title="Назад" aria-label="Назад">‹</button>
   <button class="ib" id="bFwd" title="Вперёд" aria-label="Вперёд">›</button>
@@ -144,7 +144,7 @@
 
 <!-- ===== Настройки ===== -->
 <div class="sheet full" id="settings" hidden>
-  <div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>Настройки</b><small>Мое_граббер 1.0.0</small></div></div>
+  <div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>Настройки</b><small>Мое_граббер 1.1.0</small></div></div>
   <div class="pad scroll">
     <div class="card"><h3>Аккаунт</h3><div id="acctBox"></div></div>
 
@@ -153,7 +153,7 @@
       <label class="fld"><span>Как показывать сайты</span>
         <select id="stMode"><option value="fast">Быстро, без скриптов сайта</option><option value="full">Полностью, со скриптами сайта</option><option value="direct">Напрямую (как в Chrome)</option></select></label>
       <label class="fld"><span>Поиск</span>
-        <select id="stSearch"><option value="bing">Bing</option><option value="ddg">DuckDuckGo</option><option value="google">Google</option><option value="yandex">Яндекс</option></select></label>
+        <select id="stSearch"><option value="google">Google</option><option value="bing">Bing</option><option value="ddg">DuckDuckGo</option><option value="yandex">Яндекс</option></select></label>
       <div class="row"><button class="btn" id="stClearHist">Очистить историю</button><button class="btn" id="stClearBm">Удалить закладки</button></div>
     </div>
 
@@ -169,7 +169,7 @@
 
     <div class="card">
       <h3>Прокси</h3>
-      <p class="cap">Через них открываются чужие сайты и фото. Одна строка — один прокси, вместо адреса пишется <code>{u}</code>.</p>
+      <p class="cap">Через них открываются чужие сайты и фото, сверху вниз по очереди. Одна строка — один прокси, вместо адреса пишется <code>{u}</code>. Бесплатные общие прокси бывают перегружены — надёжнее всего свой: <a href="#" id="cfHelpLink">как сделать за 5 минут</a>.</p>
       <textarea id="stProxies" rows="4" spellcheck="false"></textarea>
       <div class="row"><button class="btn" id="stTest">Проверить</button><button class="btn ghost" id="stReset">Как было</button></div>
       <ul class="tests" id="stTests"></ul>
@@ -189,6 +189,7 @@
         <li><b>Скриншоты</b> — снимки тех фото, которые сайт не отдал (защита от скачивания).</li>
         <li><b>Фото (JPG/PNG/WEBP)</b> — копии в выбранном формате, если включено в настройках.</li>
         <li><b>Скриншот страницы</b> — снимок всей страницы, если отмечено.</li>
+        <li>Если фото пришло через wsrv.nl, оно может быть пересжато — это отмечено в списке.</li>
         <li><b>список.txt</b> — откуда взят каждый файл; <b>не скачались.txt</b> — ссылки на то, что не удалось.</li></ul></details>
       <details><summary>Как выбрать папку на телефоне</summary>
         <p>Кнопка «Отправить или сохранить в…» открывает меню Android: можно выбрать «Файлы», Google Диск, Telegram и т. д.</p>
@@ -197,11 +198,54 @@
       <details><summary>Почему сайт открылся не так или пусто</summary>
         <p>«Быстро» показывает страницу без её скриптов: это быстро и надёжно, но сайты-приложения (Instagram, Pinterest и т. п.) могут быть пустыми. Тогда в меню ⋮ выберите «Полностью» или «Напрямую». В режиме «Напрямую» часть сайтов запрещает показ внутри другого сайта — откройте их в Chrome, скопируйте адрес нужного фото и вставьте сюда.</p>
         <p>Если не открывается ничего — проверьте прокси в настройках («Проверить»).</p></details>
+      <details id="cfHelp"><summary>Свой прокси на Cloudflare (бесплатно, самый надёжный)</summary>
+        <p>Общие бесплатные прокси работают со сбоями: лимиты, блокировки по IP, закрытия. Свой прокси на Cloudflare бесплатен (до 100 000 запросов в день) и работает только для вашего граббера.</p>
+        <ol>
+          <li>Откройте <a href="https://dash.cloudflare.com/sign-up" target="_blank" rel="noopener">dash.cloudflare.com</a> и зарегистрируйтесь (почта и пароль).</li>
+          <li>Слева «Compute (Workers)» → «Workers &amp; Pages» → «Create» → «Start with Hello World» → придумайте имя (например <code>grabber</code>) → «Deploy».</li>
+          <li>Нажмите «Edit code», удалите весь код и вставьте код ниже (кнопка «Копировать»), затем «Deploy».</li>
+          <li>Скопируйте адрес вида <code>https://grabber.ваше-имя.workers.dev</code>.</li>
+          <li>Здесь, в поле «Прокси», добавьте <b>первой</b> строкой: <code>https://grabber.ваше-имя.workers.dev/?url={u}</code> и нажмите «Проверить».</li>
+        </ol>
+        <button class="btn" type="button" id="cfCopy">Копировать код</button>
+<pre class="code" id="cfCode">// Прокси для «Мое_граббер»: отдаёт чужие страницы и фото только сайтам drakkkkon.github.io
+const ALLOWED = ["https://drakkkkon.github.io"];
+export default {
+  async fetch(req) {
+    const origin = req.headers.get("Origin") || "";
+    const cors = {
+      "Access-Control-Allow-Origin": origin || "*",
+      "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+      "Access-Control-Allow-Headers": "*",
+      "Vary": "Origin"
+    };
+    if (req.method === "OPTIONS") return new Response(null, { headers: cors });
+    if (origin && !ALLOWED.includes(origin)) return new Response("Not allowed", { status: 403, headers: cors });
+    const url = new URL(req.url).searchParams.get("url");
+    if (!url || !/^https?:\/\//i.test(url)) return new Response("Use ?url=https://...", { status: 400, headers: cors });
+    let r;
+    try {
+      r = await fetch(url, { redirect: "follow", headers: {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,image/avif,image/webp,image/*,*/*;q=0.8",
+        "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"
+      } });
+    } catch (e) {
+      return new Response("Fetch failed: " + e.message, { status: 502, headers: cors });
+    }
+    const h = new Headers(r.headers);
+    for (const k in cors) h.set(k, cors[k]);
+    ["content-security-policy", "x-frame-options", "set-cookie", "content-encoding", "content-length"].forEach(k => h.delete(k));
+    return new Response(r.body, { status: r.status, headers: h });
+  }
+};</pre>
+      </details>
       <details><summary>Установить как приложение</summary>
         <p>Chrome → ⋮ → «Добавить на главный экран». После этого в Chrome в меню «Поделиться» появится «Мое_граббер» — ссылка сразу откроется здесь.</p></details>
       <details><summary>Ссылки</summary>
         <ul>
-          <li>Прокси: <a href="https://allorigins.win/" target="_blank" rel="noopener">allorigins.win</a>, <a href="https://corsproxy.io/" target="_blank" rel="noopener">corsproxy.io</a>, <a href="https://codetabs.com/cors-proxy/cors-proxy.html" target="_blank" rel="noopener">codetabs.com</a></li>
+          <li>Прокси: <a href="https://cors.dev/" target="_blank" rel="noopener">cors.dev</a>, <a href="https://allorigins.win/" target="_blank" rel="noopener">allorigins.win</a>, <a href="https://corsproxy.io/" target="_blank" rel="noopener">corsproxy.io</a> (бесплатно — только для разработки), <a href="https://jina.ai/reader/" target="_blank" rel="noopener">r.jina.ai</a> (упрощённый вид страницы), <a href="https://wsrv.nl/" target="_blank" rel="noopener">wsrv.nl</a> (запасной путь для фото)</li>
+          <li>Свой прокси: <a href="https://dash.cloudflare.com/sign-up" target="_blank" rel="noopener">Cloudflare Workers</a></li>
           <li>Скриншоты: <a href="https://microlink.io/screenshot" target="_blank" rel="noopener">microlink.io</a> (около 50 бесплатных снимков в день), <a href="https://www.thum.io/" target="_blank" rel="noopener">thum.io</a>, WordPress mShots</li>
           <li>Все версии: <a href="https://drakkkkon.github.io/maymani/grabber.html" target="_blank" rel="noopener">Мое_сайты → Мое_граббер</a></li>
         </ul></details>

@@ -4,7 +4,15 @@
 (function () {
   'use strict';
 
+  // 1.1.0: codetabs закрыт (июнь 2026), corsproxy.io бесплатно только для разработки — поставлены живые прокси.
+  // {u} — адрес целиком закодированный, {raw} — как есть. r.jina.ai отдаёт страницу текстом (Markdown) — последний запасной.
   var DEFAULT_PROXIES = [
+    'https://proxy.cors.dev/{raw}',
+    'https://api.allorigins.win/raw?url={u}',
+    'https://corsproxy.io/?url={u}',
+    'https://r.jina.ai/{raw}'
+  ];
+  var OLD_DEFAULTS = [
     'https://api.allorigins.win/raw?url={u}',
     'https://corsproxy.io/?url={u}',
     'https://api.codetabs.com/v1/proxy?quest={u}'
@@ -15,13 +23,17 @@
   var G = {
     proxies: DEFAULT_PROXIES.slice(),
     DEFAULT_PROXIES: DEFAULT_PROXIES,
-    timeout: 25000,
-    good: 0 // номер прокси, который сработал последним — с него и начинаем
+    OLD_DEFAULTS: OLD_DEFAULTS,
+    timeout: 20000,
+    good: 0, // номер прокси, который сработал последним — с него и начинаем
+    fails: {} // сколько раз подряд прокси не сработал (в этом сеансе)
   };
 
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function abs(u, base) { try { return new URL(u, base).href; } catch (e) { return null; } }
   function proxyUrl(tpl, url) { return tpl.replace('{u}', encodeURIComponent(url)).replace('{raw}', url); }
+  function isReader(tpl) { return /r\.jina\.ai/.test(tpl); }
+  function pname(tpl) { try { return new URL(tpl.replace(/\{u\}|\{raw\}/g, 'x')).hostname.replace(/^(www|api|proxy)\./, ''); } catch (e) { return tpl; } }
 
   function timedFetch(url, opts, ms) {
     var ctl = new AbortController(), t = setTimeout(function () { ctl.abort(); }, ms || G.timeout);
@@ -29,37 +41,80 @@
     return fetch(url, opts).finally(function () { clearTimeout(t); });
   }
 
-  // Порядок прокси: сначала тот, что сработал в прошлый раз
-  function order() {
-    var list = G.proxies.filter(Boolean), i = Math.min(G.good, list.length - 1), out = [];
-    if (i > 0) out.push(list[i]);
-    list.forEach(function (p, k) { if (k !== i || i === 0) out.push(p); });
-    return out;
+  // Порядок прокси: сначала тот, что сработал в прошлый раз; те, что 3 раза подряд не ответили, — в конец
+  function order(binary) {
+    var list = G.proxies.filter(function (p) { return p && !(binary && isReader(p)); });
+    var i = list.indexOf(G.proxies[G.good]);
+    var out = i > 0 ? [list[i]].concat(list.filter(function (_, k) { return k !== i; })) : list.slice();
+    var alive = out.filter(function (p) { return (G.fails[p] || 0) < 3; }), dead = out.filter(function (p) { return (G.fails[p] || 0) >= 3; });
+    return alive.concat(dead);
   }
-  function remember(tpl) { var i = G.proxies.indexOf(tpl); if (i >= 0) G.good = i; }
+  function remember(tpl) { var i = G.proxies.indexOf(tpl); if (i >= 0) G.good = i; G.fails[tpl] = 0; }
+  function failed(tpl) { G.fails[tpl] = (G.fails[tpl] || 0) + 1; }
+
+  // Ответ прокси с ошибкой вместо страницы (лимиты, «нужен ключ», блок по IP, IPv4/IPv6 и т. п.)
+  var ERR_RE = /rate.?limit|too many requests|quota|api.?key|unauthori[sz]ed|forbidden|access denied|not allowed|blocked|ipv[46]|\bip address\b|your ip|upgrade (your )?plan|pricing|error\s*(code)?\s*:?\s*5\d\d|bad gateway|gateway time-?out|service unavailable|origin (is )?unreachable|failed to fetch|could not (fetch|proxy)|proxy error|shut ?down|disabled|cloudflare ray id/i;
+  function proxyError(text, url) {
+    var t = (text || '').trim();
+    if (t.length < 30) return 'пустой ответ';
+    var head = t.slice(0, 400);
+    if (/^[\[{]/.test(head)) {
+      try { var j = JSON.parse(t); if (j && (j.error || j.Error || j.message && !j.contents)) return String((j.error && (j.error.message || j.error)) || j.Error || j.message).slice(0, 120); } catch (e) {}
+    }
+    // Короткий ответ с текстом ошибки — это не сайт
+    if (t.length < 4000 && ERR_RE.test(t) && !/<(img|article|main|section|nav)\b/i.test(t)) {
+      var plain = t.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      return plain.slice(0, 120) || 'ошибка прокси';
+    }
+    return null;
+  }
+
+  // Markdown от r.jina.ai → простая страница
+  function mdToHtml(md, url) {
+    var title = (md.match(/^Title:\s*(.*)$/m) || [])[1] || '';
+    var body = md.split(/^Markdown Content:\s*$/m)[1] || md;
+    function e(x) { return x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+    function inline(x) {
+      x = e(x);
+      x = x.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^)]*&quot;)?\)/g, '<img src="$2" alt="$1">');
+      x = x.replace(/\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^)]*&quot;)?\)/g, '<a href="$2">$1</a>');
+      x = x.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+      return x;
+    }
+    var html = body.split(/\n{2,}/).map(function (blk) {
+      blk = blk.trim(); if (!blk) return '';
+      var h = blk.match(/^(#{1,6})\s+(.*)$/); if (h && blk.indexOf('\n') < 0) return '<h' + h[1].length + '>' + inline(h[2]) + '</h' + h[1].length + '>';
+      if (/^([*+-]|\d+\.)\s/.test(blk)) return '<ul>' + blk.split('\n').map(function (l) { return '<li>' + inline(l.replace(/^\s*([*+-]|\d+\.)\s+/, '')) + '</li>'; }).join('') + '</ul>';
+      return '<p>' + inline(blk).replace(/\n/g, '<br>') + '</p>';
+    }).join('\n');
+    return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + e(title) + '</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:760px;margin:0 auto;padding:12px 16px;color:#222}img{max-width:100%;height:auto}a{color:#4a3fe0}.mg-note{font-size:13px;background:#fff6dc;border-radius:8px;padding:8px 10px;color:#6b5600}</style></head><body><p class="mg-note">Упрощённый вид страницы (через r.jina.ai): сайт не открылся через обычные прокси.</p>' + html + '</body></html>';
+  }
 
   // ---------- страницы ----------
-  // Возвращает { html, url } — url может отличаться (переадресация видна только у allorigins/get)
+  // Возвращает { html, url, via }
   async function fetchPage(url) {
     var errors = [];
     try {
-      var r = await timedFetch(url, { mode: 'cors' }, 12000);
+      var r = await timedFetch(url, { mode: 'cors' }, 10000);
       if (r.ok) { var t = await r.text(); if (t && t.length > 50) return { html: t, url: r.url || url, via: 'напрямую' }; }
     } catch (e) { /* обычно чужой сайт не разрешает — идём через прокси */ }
-    var list = order();
+    var list = order(false);
     for (var i = 0; i < list.length; i++) {
+      var tpl = list[i], nm = pname(tpl);
       try {
-        var res = await timedFetch(proxyUrl(list[i], url));
-        if (!res.ok) { errors.push(res.status); continue; }
+        var res = await timedFetch(proxyUrl(tpl, url), isReader(tpl) ? { headers: { 'X-Return-Format': 'markdown' } } : {}, isReader(tpl) ? 30000 : G.timeout);
         var ct = res.headers.get('content-type') || '';
-        if (/^image\//i.test(ct)) return { image: await res.blob(), url: url, via: list[i] };
+        if (res.ok && /^image\//i.test(ct)) { remember(tpl); return { image: true, url: url, via: tpl }; }
         var html = await res.text();
-        if (!html || html.length < 30) { errors.push('пусто'); continue; }
-        remember(list[i]);
-        return { html: html, url: url, via: list[i] };
-      } catch (e) { errors.push(e.name === 'AbortError' ? 'долго' : 'нет связи'); }
+        if (!res.ok) { failed(tpl); errors.push(nm + ': ' + res.status + (proxyError(html) ? ' ' + proxyError(html) : '')); continue; }
+        var bad = proxyError(html, url);
+        if (bad) { failed(tpl); errors.push(nm + ': ' + bad); continue; }
+        remember(tpl);
+        if (isReader(tpl)) html = mdToHtml(html, url);
+        return { html: html, url: url, via: tpl, reader: isReader(tpl) };
+      } catch (e) { failed(tpl); errors.push(nm + ': ' + (e.name === 'AbortError' ? 'не ответил вовремя' : 'нет связи')); }
     }
-    var err = new Error('Страница не открылась (' + (errors.join(', ') || 'нет прокси') + ')');
+    var err = new Error('Страница не открылась.\n' + (errors.join('\n') || 'Нет прокси в настройках'));
     err.codes = errors; throw err;
   }
 
@@ -95,35 +150,41 @@
     return { bytes: buf, ext: t.ext, mime: t.mime };
   }
 
-  // Фото «как есть»: те же байты, что отдаёт сайт
+  // Фото «как есть»: те же байты, что отдаёт сайт. Запасной путь — wsrv.nl (может пересжать, формат сохраняет)
+  async function viaProxy(url, ms) {
+    var list = order(true);
+    for (var i = 0; i < list.length; i++) {
+      try {
+        var res = await timedFetch(proxyUrl(list[i], url), {}, ms || 15000);
+        if (!res.ok) { failed(list[i]); continue; }
+        var img = await blobToImage(res);
+        if (img) { remember(list[i]); img.via = 'через ' + pname(list[i]); return img; }
+      } catch (e) { failed(list[i]); }
+    }
+    return null;
+  }
+  async function viaWsrv(url) {
+    try {
+      var r = await timedFetch('https://wsrv.nl/?url=' + encodeURIComponent(url) + '&n=-1', { mode: 'cors' }, 20000);
+      if (r.ok) { var im = await blobToImage(r); if (im) { im.via = 'через wsrv.nl (может быть пересжато)'; return im; } }
+    } catch (e) {}
+    return null;
+  }
   async function fetchImage(url) {
     if (/^data:/i.test(url)) {
       try { var rd = await fetch(url); return Object.assign(await blobToImage(rd) || {}, { via: 'со страницы' }); } catch (e) { return null; }
     }
     try {
-      var r = await timedFetch(url, { mode: 'cors' }, 15000);
+      var r = await timedFetch(url, { mode: 'cors' }, 12000);
       if (r.ok) { var im = await blobToImage(r); if (im) { im.via = 'напрямую'; return im; } }
     } catch (e) { /* нет разрешения — дальше прокси */ }
-    var list = order();
-    for (var i = 0; i < list.length; i++) {
-      try {
-        var res = await timedFetch(proxyUrl(list[i], url));
-        if (!res.ok) continue;
-        var img = await blobToImage(res);
-        if (img) { remember(list[i]); img.via = 'через прокси'; return img; }
-      } catch (e) { /* следующий */ }
-    }
-    return null;
+    return (await viaProxy(url)) || (await viaWsrv(url));
   }
 
   // ---------- скриншоты (службы-фотографы страниц) ----------
   async function getBinary(url) {
     try { var r = await timedFetch(url, { mode: 'cors' }, 40000); if (r.ok) { var im = await blobToImage(r); if (im) return im; } } catch (e) {}
-    var list = order();
-    for (var i = 0; i < list.length; i++) {
-      try { var res = await timedFetch(proxyUrl(list[i], url), {}, 40000); if (res.ok) { var img = await blobToImage(res); if (img) return img; } } catch (e) {}
-    }
-    return null;
+    return (await viaProxy(url, 40000)) || (await viaWsrv(url));
   }
   async function screenshot(url, fullPage) {
     // 1) microlink (бесплатно ~50 снимков в день)
@@ -221,7 +282,12 @@
       for (var i = 0; i < LAZY.length; i++) { var v = el.getAttribute(LAZY[i]); if (v) C.add(v, 'img', { alt: alt }); }
       C.add(el.getAttribute('src') || el.getAttribute('href') || el.getAttribute('xlink:href'), el.tagName === 'SOURCE' ? 'img' : 'img', { alt: alt, w: +el.getAttribute('width') || 0, h: +el.getAttribute('height') || 0 });
     });
-    doc.querySelectorAll('a[href]').forEach(function (a) { var h = a.getAttribute('href'); if (IMG_EXT.test(h)) C.add(h, 'link', { alt: a.getAttribute('title') || a.textContent.trim().slice(0, 80) }); });
+    doc.querySelectorAll('a[href]').forEach(function (a) {
+      var h = a.getAttribute('href');
+      if (IMG_EXT.test(h)) C.add(h, 'link', { alt: a.getAttribute('title') || a.textContent.trim().slice(0, 80) });
+      // Google «Картинки»: полный размер в параметре imgurl
+      var m = h.match(/[?&]imgurl=([^&]+)/); if (m) { try { C.add(decodeURIComponent(m[1]), 'img'); } catch (e) {} }
+    });
     doc.querySelectorAll('meta[property="og:image"], meta[property="og:image:url"], meta[property="og:image:secure_url"], meta[name="twitter:image"], meta[name="twitter:image:src"], meta[itemprop="image"]').forEach(function (m) { C.add(m.getAttribute('content'), 'meta', { alt: 'Обложка страницы' }); });
     doc.querySelectorAll('link[rel~="image_src"], link[rel~="apple-touch-icon"], link[rel~="icon"], link[rel="preload"][as="image"]').forEach(function (l) { C.add(l.getAttribute('href'), /icon/.test(l.getAttribute('rel')) ? 'icon' : 'img', { alt: 'Значок сайта' }); });
     doc.querySelectorAll('video[poster]').forEach(function (v) { C.add(v.getAttribute('poster'), 'img', { alt: 'Обложка видео' }); });
@@ -353,6 +419,7 @@
       var u = new URL(url);
       if (/duckduckgo\.com$/.test(u.hostname) && u.pathname === '/l/' && u.searchParams.get('uddg')) return u.searchParams.get('uddg');
       if (/(^|\.)google\.[a-z.]+$/.test(u.hostname) && u.pathname === '/url') return u.searchParams.get('q') || u.searchParams.get('url') || url;
+      if (/(^|\.)google\.[a-z.]+$/.test(u.hostname) && u.pathname === '/imgres' && u.searchParams.get('imgurl')) return u.searchParams.get('imgurl');
       if (/bing\.com$/.test(u.hostname) && u.pathname === '/ck/a') {
         var p = u.searchParams.get('u'); if (p && p.slice(0, 2) === 'a1') return atob(p.slice(2).replace(/-/g, '+').replace(/_/g, '/'));
       }
@@ -373,6 +440,6 @@
     return n || 'картинка';
   }
 
-  Object.assign(G, { fetchPage: fetchPage, fetchImage: fetchImage, screenshot: screenshot, convert: convert, extract: extract, prepare: prepare, metaRefresh: metaRefresh, unwrap: unwrap, nameFrom: nameFrom, extOf: extOf, sniff: sniff, abs: abs, proxyUrl: proxyUrl, timedFetch: timedFetch });
+  Object.assign(G, { proxyError: proxyError, mdToHtml: mdToHtml, pname: pname, isReader: isReader, fetchPage: fetchPage, fetchImage: fetchImage, screenshot: screenshot, convert: convert, extract: extract, prepare: prepare, metaRefresh: metaRefresh, unwrap: unwrap, nameFrom: nameFrom, extOf: extOf, sniff: sniff, abs: abs, proxyUrl: proxyUrl, timedFetch: timedFetch });
   window.Grab = G;
 })();

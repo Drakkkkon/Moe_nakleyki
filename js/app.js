@@ -1,7 +1,7 @@
-/* Мое_граббер 1.0.0 — интерфейс: вкладки, адресная строка, выбор картинок, скачивание в ZIP, сохранение */
+/* Мое_граббер 1.1.0 — интерфейс: вкладки, адресная строка, выбор картинок, скачивание в ZIP, сохранение */
 (function () {
   'use strict';
-  var VERSION = '1.0.0';
+  var VERSION = '1.1.0';
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -11,16 +11,25 @@
   function host(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return ''; } }
   function plural(n, a, b, c) { var m = n % 100, k = n % 10; return n + ' ' + (m > 10 && m < 15 ? c : k === 1 ? a : k >= 2 && k <= 4 ? b : c); }
 
-  var DEF = { mode: 'fast', search: 'bing', conv: '', q: 92, shots: true, min: 100, conc: 4, proxies: Grab.DEFAULT_PROXIES.slice() };
-  var S = Object.assign({}, DEF, jget('mg_settings', {}));
+  var DEF = { sv: 2, mode: 'fast', search: 'google', conv: '', q: 92, shots: true, min: 100, conc: 4, proxies: Grab.DEFAULT_PROXIES.slice() };
+  var STORED = jget('mg_settings', null) || {};
+  var S = Object.assign({}, DEF, STORED);
+  S.sv = STORED.sv || (Object.keys(STORED).length ? 1 : 2);
   if (!Array.isArray(S.proxies) || !S.proxies.length) S.proxies = DEF.proxies.slice();
+  // 1.1.0: поиск по умолчанию — Google; старый набор прокси (codetabs закрыт) меняем на новый, свои прокси сохраняем
+  if ((S.sv || 1) < 2) {
+    S.search = 'google';
+    var own = S.proxies.filter(function (p) { return Grab.OLD_DEFAULTS.indexOf(p) < 0 && DEF.proxies.indexOf(p) < 0; });
+    S.proxies = own.concat(DEF.proxies);
+    S.sv = 2; try { localStorage.setItem('mg_settings', JSON.stringify(S)); } catch (e) {}
+  }
   Grab.proxies = S.proxies;
   function saveS() { jset('mg_settings', S); Grab.proxies = S.proxies; }
 
   var SEARCH = {
     bing: ['https://www.bing.com/search?q={q}', 'https://www.bing.com/images/search?q={q}'],
     ddg: ['https://html.duckduckgo.com/html/?q={q}', 'https://www.bing.com/images/search?q={q}'],
-    google: ['https://www.google.com/search?q={q}&gbv=1', 'https://www.google.com/search?q={q}&tbm=isch&gbv=1'],
+    google: ['https://www.google.com/search?q={q}&hl=ru&gbv=1', 'https://www.google.com/search?q={q}&tbm=isch&hl=ru&gbv=1'],
     yandex: ['https://yandex.ru/search/?text={q}', 'https://yandex.ru/images/search?text={q}']
   };
   var TILES = [
@@ -54,13 +63,13 @@
   }
 
   // ---------- адрес ----------
-  function toUrl(s, images) {
+  function toUrl(s, images, engine) {
     s = (s || '').trim(); if (!s) return '';
     if (/^https?:\/\//i.test(s)) return s;
     if (/^\/\//.test(s)) return 'https:' + s;
     if (!/\s/.test(s) && /^[^/]+\.[a-zа-яё]{2,}(?::\d+)?(\/.*)?$/i.test(s)) return 'https://' + s;
     if (/^localhost(:\d+)?(\/|$)/.test(s)) return 'http://' + s;
-    var tpl = (SEARCH[S.search] || SEARCH.bing)[images ? 1 : 0];
+    var tpl = (SEARCH[engine || S.search] || SEARCH.google)[images ? 1 : 0];
     return tpl.replace('{q}', encodeURIComponent(s));
   }
 
@@ -135,6 +144,12 @@
       var res = await getPage(url, reload);
       if (my !== loadId) return;
       if (res.image || Grab.extOf(url) && !res.html) { renderImagePage(url, t); busy(false); return; }
+      if (isGoogleBlock(url, res.html)) {
+        delete pageCache[url]; busy(false);
+        var q = googleQuery(url);
+        toast('Google не пустил через прокси (просит капчу) — показываю те же результаты в Bing. Можно открыть Google «Напрямую» в меню ⋮.', true);
+        navigate(toUrl(q, /tbm=isch|udm=2/.test(url), 'bing'), { replace: true }); return;
+      }
       var refresh = Grab.metaRefresh(res.html, res.url);
       if (refresh && refresh !== url) { busy(false); navigate(refresh, { replace: true }); return; }
       var ex = Grab.extract(res.html, res.url);
@@ -149,9 +164,14 @@
       if (my !== loadId) return;
       busy(false);
       if (Grab.extOf(url)) { renderImagePage(url, t); return; }
-      showErr((e && e.message ? e.message : 'Ошибка') + '. Сайт мог запретить показ через прокси.');
+      showErr((e && e.message ? e.message : 'Ошибка') + '\n\nПопробуйте «Открыть напрямую» или добавьте свой прокси (Настройки → Прокси).');
     }
   }
+  function isGoogleBlock(url, html) {
+    return /(^|\.)google\.[a-z.]+$/.test(host(url).replace(/^www\./, '')) && /\/search/.test(url) &&
+      (/\/sorry\/|unusual traffic|recaptcha|detected unusual|не робот|необычный трафик/i.test(html) || html.length < 1500);
+  }
+  function googleQuery(url) { try { return new URL(url).searchParams.get('q') || ''; } catch (e) { return ''; } }
   function looksLikeImageText(s) { return /^\s*(�|GIF8|RIFF|\x89PNG)/.test(s.slice(0, 8)); }
   function renderImagePage(url, t) {
     t.items = [{ url: url, kind: 'img', ext: Grab.extOf(url), alt: '' }]; t.title = Grab.nameFrom(url);
@@ -488,9 +508,18 @@
     for (var i = 0; i < S.proxies.length; i++) {
       var li = document.createElement('li'); li.textContent = '… ' + host(S.proxies[i]); ul.appendChild(li);
       var t0 = Date.now();
-      try { var r = await Grab.timedFetch(Grab.proxyUrl(S.proxies[i], 'https://example.com/'), {}, 15000); var tx = await r.text(); li.textContent = (r.ok && /Example Domain/.test(tx) ? '✓ ' : '✕ ') + host(S.proxies[i]) + ' — ' + (Date.now() - t0) + ' мс'; li.className = r.ok && /Example Domain/.test(tx) ? 'ok' : 'bad'; }
-      catch (e) { li.textContent = '✕ ' + host(S.proxies[i]) + ' — не отвечает'; li.className = 'bad'; }
+      var nm = Grab.pname(S.proxies[i]);
+      try {
+        var r = await Grab.timedFetch(Grab.proxyUrl(S.proxies[i], 'https://example.com/'), {}, 20000); var tx = await r.text();
+        var good = r.ok && /Example Domain/.test(tx), why = good ? '' : (Grab.proxyError(tx) || ('ответ ' + r.status));
+        li.textContent = (good ? '✓ ' : '✕ ') + nm + ' — ' + (good ? (Date.now() - t0) + ' мс' : why); li.className = good ? 'ok' : 'bad';
+      } catch (e) { li.textContent = '✕ ' + nm + ' — не отвечает'; li.className = 'bad'; }
     }
+  });
+  $('#cfHelpLink').addEventListener('click', function (e) { e.preventDefault(); var h = $('.help'); h.open = true; var d = $('#cfHelp'); d.open = true; d.scrollIntoView({ behavior: 'smooth' }); });
+  $('#cfCopy').addEventListener('click', function () {
+    var code = $('#cfCode').textContent;
+    (navigator.clipboard ? navigator.clipboard.writeText(code) : Promise.reject()).then(function () { toast('Код скопирован'); }, function () { var r = document.createRange(); r.selectNodeContents($('#cfCode')); var sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('Выделено — скопируйте'); });
   });
   $('#stClearHist').addEventListener('click', function () { jset('mg_history', []); toast('История очищена'); renderHome(); });
   $('#stClearBm').addEventListener('click', function () { if (confirm('Удалить все закладки?')) { jset('mg_bookmarks', []); toast('Закладки удалены'); renderHome(); } });
