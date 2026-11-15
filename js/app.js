@@ -1,7 +1,7 @@
-/* Мое_граббер 1.1.0 — интерфейс: вкладки, адресная строка, выбор картинок, скачивание в ZIP, сохранение */
+/* Мое_граббер 1.2.0 — интерфейс: вкладки, адресная строка, выбор картинок, скачивание в ZIP, сохранение */
 (function () {
   'use strict';
-  var VERSION = '1.1.0';
+  var VERSION = '1.2.0';
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -11,7 +11,7 @@
   function host(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return ''; } }
   function plural(n, a, b, c) { var m = n % 100, k = n % 10; return n + ' ' + (m > 10 && m < 15 ? c : k === 1 ? a : k >= 2 && k <= 4 ? b : c); }
 
-  var DEF = { sv: 2, mode: 'fast', search: 'google', conv: '', q: 92, shots: true, min: 100, conc: 4, proxies: Grab.DEFAULT_PROXIES.slice() };
+  var DEF = { sv: 3, mode: 'fast', search: 'google', conv: '', q: 92, shots: true, min: 100, conc: 4, proxies: Grab.DEFAULT_PROXIES.slice() };
   var STORED = jget('mg_settings', null) || {};
   var S = Object.assign({}, DEF, STORED);
   S.sv = STORED.sv || (Object.keys(STORED).length ? 1 : 2);
@@ -23,6 +23,8 @@
     S.proxies = own.concat(DEF.proxies);
     S.sv = 2; try { localStorage.setItem('mg_settings', JSON.stringify(S)); } catch (e) {}
   }
+  var FIX_DIRECT = S.sv < 3; // 1.2.0: «Напрямую» больше не залипает у вкладок
+  if (FIX_DIRECT) { if (S.mode === 'direct') S.mode = 'fast'; S.sv = 3; try { localStorage.setItem('mg_settings', JSON.stringify(S)); } catch (e) {} }
   Grab.proxies = S.proxies;
   function saveS() { jset('mg_settings', S); Grab.proxies = S.proxies; }
 
@@ -54,6 +56,7 @@
   if (!Array.isArray(tabs) || !tabs.length) tabs = [newTabObj()];
   tabs.forEach(function (t) { t.id = seq++; t.items = null; t.html = null; });
   cur = Math.min(jget('mg_tab', 0) || 0, tabs.length - 1);
+  if (FIX_DIRECT) tabs.forEach(function (t) { if (t.mode === 'direct') t.mode = ''; });
   function newTabObj(url) { return { id: seq++, hist: url ? [url] : [], i: url ? 0 : -1, title: '', mode: '' }; }
   function T() { return tabs[cur]; }
   function curUrl() { var t = T(); return t.i >= 0 ? t.hist[t.i] : ''; }
@@ -87,7 +90,7 @@
   }
 
   function showHome() {
-    $('#home').hidden = false; $('#frameBox').hidden = true; $('#err').hidden = true;
+    $('#home').hidden = false; $('#frameBox').hidden = true; $('#err').hidden = true; hideNote();
     $('#addr').value = ''; $('#lock').textContent = '⌕';
     renderHome(); updateBar(); setFab(0);
   }
@@ -128,15 +131,24 @@
     var t = T(), url = curUrl(), my = ++loadId;
     updateBar();
     if (!url) { showHome(); return; }
-    var mode = t.mode || S.mode;
+    var mode = t.once === url ? 'direct' : (t.mode || S.mode);
+    if (t.once && t.once !== url) t.once = '';
     t.items = null; t.html = null; t.title = host(url);
-    setFab(0); busy(true);
+    setFab(0); busy(true); hideNote();
+    var gIgu = isGoogleIgu(url);
+    if (mode === 'direct' && !gIgu && NOFRAME.test(host(url))) {
+      mode = 'fast';
+      showNote(esc(host(url)) + ' не разрешает показывать себя внутри других сайтов, поэтому открыт в режиме «Быстро».');
+    }
     if (mode === 'direct') {
+      if (gIgu) showNote('Это Google напрямую (через прокси он просил капчу). Чтобы скачать фото с найденного сайта: долгое нажатие на ссылку → «Копировать адрес ссылки» → вставьте в адресную строку граббера.', [['Искать в Bing', function () { navigate(toUrl(googleQuery(url), /tbm=isch|udm=2/.test(url), 'bing')); }]]);
+      else showNote('Режим «Напрямую». Если видите «не позволяет установить соединение» — сайт запрещает показ внутри граббера.', [['Открыть быстро', function () { t.once = ''; if (t.mode === 'direct') t.mode = ''; saveTabs(); render(); }], ['В Chrome ↗', function () { window.open(url, '_blank', 'noopener'); }]]);
       showFrame(); var f = makeFrame(true); f.src = url;
       f.onload = function () { if (my === loadId) busy(false); };
       setTimeout(function () { if (my === loadId) busy(false); }, 8000);
       addHistory(url, t.title);
       // картинки ищем по коду страницы в фоне
+      if (gIgu) { addHistory(url, 'Google'); return; }
       try { var r0 = await getPage(url, reload); if (my !== loadId) return; if (r0.html) { var ex0 = Grab.extract(r0.html, r0.url); t.items = ex0.items; t.title = ex0.title || t.title; setFab(countBig(t.items)); updateBar(); } } catch (e) {}
       return;
     }
@@ -147,8 +159,8 @@
       if (isGoogleBlock(url, res.html)) {
         delete pageCache[url]; busy(false);
         var q = googleQuery(url);
-        toast('Google не пустил через прокси (просит капчу) — показываю те же результаты в Bing. Можно открыть Google «Напрямую» в меню ⋮.', true);
-        navigate(toUrl(q, /tbm=isch|udm=2/.test(url), 'bing'), { replace: true }); return;
+        var gu = 'https://www.google.com/search?igu=1&hl=ru&q=' + encodeURIComponent(q) + (/tbm=isch|udm=2/.test(url) ? '&udm=2' : '');
+        t.once = gu; navigate(gu, { replace: true }); return;
       }
       var refresh = Grab.metaRefresh(res.html, res.url);
       if (refresh && refresh !== url) { busy(false); navigate(refresh, { replace: true }); return; }
@@ -167,6 +179,16 @@
       showErr((e && e.message ? e.message : 'Ошибка') + '\n\nПопробуйте «Открыть напрямую» или добавьте свой прокси (Настройки → Прокси).');
     }
   }
+  // Сайты, которые запрещают показ внутри других сайтов (для них «Напрямую» не работает)
+  var NOFRAME = /(^|\.)(google\.[a-z.]+|youtube\.com|bing\.com|yandex\.[a-z]+|ya\.ru|facebook\.com|instagram\.com|x\.com|twitter\.com|vk\.com|ok\.ru|pinterest\.[a-z.]+|reddit\.com|github\.com|tiktok\.com|linkedin\.com|amazon\.[a-z.]+|ozon\.ru|ozon\.kz|wildberries\.[a-z]+|avito\.ru|kaspi\.kz|olx\.kz|telegram\.org|t\.me|mail\.ru|dzen\.ru|apple\.com|microsoft\.com|duckduckgo\.com|deviantart\.com|artstation\.com|behance\.net|flickr\.com|tumblr\.com|unsplash\.com|pexels\.com|freepik\.com|shutterstock\.com)$/i;
+  function isGoogleIgu(url) { try { var u = new URL(url); return /(^|\.)google\.[a-z.]+$/.test(u.hostname) && u.searchParams.get('igu') === '1'; } catch (e) { return false; } }
+  function showNote(text, btns) {
+    var n = $('#note'); n.innerHTML = '<span>' + text + '</span>';
+    (btns || []).forEach(function (b) { var el = document.createElement('button'); el.className = 'btn sm'; el.textContent = b[0]; el.onclick = b[1]; n.appendChild(el); });
+    var x = document.createElement('button'); x.className = 'ib x'; x.setAttribute('aria-label', 'Скрыть'); x.textContent = '✕'; x.onclick = hideNote; n.appendChild(x);
+    n.hidden = false; $('#view').classList.add('noted'); $('#view').style.setProperty('--noteH', n.offsetHeight + 'px');
+  }
+  function hideNote() { $('#note').hidden = true; $('#view').classList.remove('noted'); }
   function isGoogleBlock(url, html) {
     return /(^|\.)google\.[a-z.]+$/.test(host(url).replace(/^www\./, '')) && /\/search/.test(url) &&
       (/\/sorry\/|unusual traffic|recaptcha|detected unusual|не робот|необычный трафик/i.test(html) || html.length < 1500);
@@ -242,7 +264,8 @@
     jset('mg_bookmarks', bm); updateBar();
   });
   $('#errRetry').addEventListener('click', function () { render(true); });
-  $('#errDirect').addEventListener('click', function () { T().mode = 'direct'; saveTabs(); render(); });
+  // «Открыть напрямую» — только для этой страницы, режим вкладки не меняется
+  $('#errDirect').addEventListener('click', function () { T().once = curUrl(); render(); });
   $('#errChrome').addEventListener('click', function () { window.open(curUrl(), '_blank', 'noopener'); });
 
   // вкладки
@@ -319,6 +342,8 @@
       return true;
     });
     if ($('#pkSort').value === 'big') list = list.slice().sort(function (a, b) { return (b.nw * b.nh || 0) - (a.nw * a.nh || 0); });
+    // не показывающиеся — в конец
+    list = list.filter(function (i) { return !i.failed; }).concat(list.filter(function (i) { return i.failed; }));
     return list;
   }
   function drawChips() {
@@ -345,6 +370,7 @@
       var it = byUrl(img.parentNode.dataset.u);
       img.onload = function () { it.loaded = true; it.nw = img.naturalWidth; it.nh = img.naturalHeight; var d = img.parentNode.querySelector('.dm'); if (d) d.textContent = it.nw + '×' + it.nh; if (first && $('#pkSmall').checked && isSmall(it)) { delete P.sel[it.url]; img.parentNode.remove(); updCount(); } };
       img.onerror = function () { it.failed = true; img.parentNode.classList.add('bad'); };
+      if (img.complete && !img.naturalWidth) img.onerror(); else if (img.complete && img.naturalWidth) img.onload();
     });
     updCount();
   }

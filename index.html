@@ -13,7 +13,7 @@
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<!-- Мое_граббер 1.1.0 -->
+<!-- Мое_граббер 1.2.0 -->
 <header class="bar">
   <button class="ib" id="bBack" title="Назад" aria-label="Назад">‹</button>
   <button class="ib" id="bFwd" title="Вперёд" aria-label="Вперёд">›</button>
@@ -42,6 +42,7 @@
     <h2 id="hiHead" hidden>Недавно</h2>
     <div class="list" id="hiList"></div>
   </section>
+  <div class="note" id="note" hidden></div>
   <div id="frameBox"></div>
   <section id="err" class="err" hidden>
     <div class="errIco">🌐</div>
@@ -49,7 +50,7 @@
     <p id="errText"></p>
     <div class="row">
       <button class="btn pri" id="errRetry">Повторить</button>
-      <button class="btn" id="errDirect">Открыть напрямую</button>
+      <button class="btn" id="errDirect">Открыть напрямую (один раз)</button>
       <button class="btn" id="errChrome">В Chrome ↗</button>
     </div>
     <p class="hint">Даже если страница не показалась, кнопка «Фото» всё равно может найти картинки — или вставьте прямую ссылку на фото.</p>
@@ -144,7 +145,7 @@
 
 <!-- ===== Настройки ===== -->
 <div class="sheet full" id="settings" hidden>
-  <div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>Настройки</b><small>Мое_граббер 1.1.0</small></div></div>
+  <div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>Настройки</b><small>Мое_граббер 1.2.0</small></div></div>
   <div class="pad scroll">
     <div class="card"><h3>Аккаунт</h3><div id="acctBox"></div></div>
 
