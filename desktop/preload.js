@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld('MGNative', {
   saveAs: (name, bytes) => ipcRenderer.invoke('save-as', name, bytes),
   saveDownloads: (name, bytes) => ipcRenderer.invoke('save-downloads', name, bytes),
   showFile: (p) => ipcRenderer.invoke('show-file', p),
+  downloadsDir: () => ipcRenderer.invoke('downloads-dir'),
+  pickDir: (def) => ipcRenderer.invoke('pick-dir', def || ''),
+  writeFile: (dir, name, bytes) => ipcRenderer.invoke('write-file', dir, name, bytes),
+  openPath: (p) => ipcRenderer.invoke('open-path', p),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   version: () => ipcRenderer.invoke('version'),
   on: (ch, fn) => { if (['open-tab', 'ctx', 'key', 'bm-link'].includes(ch)) ipcRenderer.on(ch, (e, d) => fn(d)); }

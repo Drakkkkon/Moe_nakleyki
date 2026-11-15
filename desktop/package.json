@@ -1,7 +1,7 @@
 {
   "name": "moe-grabber",
   "productName": "Мое_граббер",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Мое_граббер — браузер, который скачивает фото с сайтов в ZIP",
   "main": "main.js",
   "author": "Drakkkkon",

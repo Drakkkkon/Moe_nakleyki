@@ -192,6 +192,18 @@ ipcMain.handle('save-downloads', async (e, name, bytes) => {
   return p;
 });
 ipcMain.handle('show-file', (e, p) => { if (p) shell.showItemInFolder(p); });
+// 1.6.0: авто-листание — папка для страниц и запись файлов по одному
+ipcMain.handle('downloads-dir', () => app.getPath('downloads'));
+ipcMain.handle('pick-dir', async (e, def) => {
+  const r = await dialog.showOpenDialog(win, { title: 'Папка для страниц', defaultPath: def || app.getPath('downloads'), properties: ['openDirectory', 'createDirectory'] });
+  return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+});
+ipcMain.handle('write-file', (e, dir, name, bytes) => {
+  fs.mkdirSync(dir, { recursive: true });
+  const p = uniquePath(path.join(dir, String(name).replace(/[\\/:*?"<>|]+/g, '_')));
+  fs.writeFileSync(p, Buffer.from(bytes)); return p;
+});
+ipcMain.handle('open-path', (e, p) => { if (p) shell.openPath(p); });
 ipcMain.handle('open-external', (e, url) => { if (/^https?:/i.test(url)) shell.openExternal(url); });
 ipcMain.handle('version', () => app.getVersion());
 ipcMain.on('hostname', (e) => { e.returnValue = os.hostname(); });
