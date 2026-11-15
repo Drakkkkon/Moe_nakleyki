@@ -1,7 +1,7 @@
-/* Мое_граббер 1.3.0 — интерфейс: вкладки, адресная строка, выбор картинок, скачивание в ZIP, сохранение */
+/* Мое_граббер 1.4.0 — интерфейс: вкладки, адресная строка, выбор картинок, скачивание в ZIP, сохранение */
 (function () {
   'use strict';
-  var VERSION = '1.3.0';
+  var VERSION = '1.4.0';
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -96,8 +96,78 @@
     return frame;
   }
 
+  // ================= Программа для Windows: настоящие вкладки-браузеры (<webview>) =================
+  var NATIVE = window.MGNative || null;
+  function dvAll() { return $$('#frameBox webview'); }
+  function dvShow(t) {
+    $('#frameBox').querySelectorAll('iframe').forEach(function (f) { f.remove(); });
+    dvAll().forEach(function (w) { w.style.display = w === t.wv ? 'flex' : 'none'; });
+  }
+  function dvCreate(t, url) {
+    var wv = document.createElement('webview');
+    wv.setAttribute('partition', 'persist:web');
+    wv.setAttribute('allowpopups', '');
+    wv.setAttribute('webpreferences', 'contextIsolation=yes');
+    wv.src = url; t.wv = wv; t.wvReady = false;
+    wv.addEventListener('dom-ready', function () { t.wvReady = true; if (t === T()) updateBar(); });
+    wv.addEventListener('did-start-loading', function () { if (t === T()) busy(true); });
+    wv.addEventListener('did-stop-loading', function () {
+      if (t === T()) busy(false);
+      dvScan(t);
+    });
+    function onNav(u) {
+      if (!/^https?:/i.test(u)) return;
+      var pend = t.pending; t.pending = '';
+      if (pend === 'back' && t.i > 0) t.i--;
+      else if (pend === 'fwd' && t.i < t.hist.length - 1) t.i++;
+      if (t.hist[t.i] !== u) {
+        if (pend) t.hist[t.i] = u;   // переадресация во время перехода назад/вперёд
+        else { t.hist = t.hist.slice(0, t.i + 1); t.hist.push(u); t.i = t.hist.length - 1; }
+      }
+      t.items = null; t.title = host(u);
+      if (t === T()) { setFab(0); updateBar(); $('#err').hidden = true; $('#frameBox').hidden = false; }
+      saveTabs();
+    }
+    wv.addEventListener('did-navigate', function (e) { onNav(e.url); });
+    wv.addEventListener('did-navigate-in-page', function (e) { if (e.isMainFrame) onNav(e.url); });
+    wv.addEventListener('page-title-updated', function (e) { t.title = e.title; if (t === T()) updateBar(); addHistory(curUrlOf(t), e.title); saveTabs(); });
+    wv.addEventListener('did-fail-load', function (e) {
+      if (!e.isMainFrame || e.errorCode === -3) return;
+      if (t === T()) { busy(false); showErr('Сайт не открылся: ' + (e.errorDescription || e.errorCode) + '\n' + (e.validatedURL || '') + '\n\nПроверьте адрес и интернет, затем «Повторить».'); }
+    });
+    $('#frameBox').appendChild(wv);
+    return wv;
+  }
+  function curUrlOf(t) { return t.i >= 0 ? t.hist[t.i] : ''; }
+  async function dvScan(t) {
+    if (!t.wv || !t.wvReady) return null;
+    try {
+      var r = await t.wv.executeJavaScript(Grab.COLLECT_JS);
+      var ex = Grab.extract(r.html, r.url);
+      var map = {}, list = [];
+      function put(it) { if (!it || !it.url || !/^(https?:|data:image)/.test(it.url) || /^data:/.test(it.url) && it.url.length < 200) return; var m = map[it.url]; if (m) { if ((it.nw || 0) > (m.nw || 0)) { m.nw = it.nw; m.nh = it.nh; } if (it.alt && !m.alt) m.alt = it.alt; return; } var c = Object.assign({ ext: Grab.extOf(it.url) }, it); map[it.url] = c; list.push(c); }
+      r.items.forEach(put); ex.items.forEach(put);
+      t.items = list; if (r.title) t.title = r.title;
+      if (t === T()) { setFab(countBig(list)); updateBar(); }
+      return list;
+    } catch (e) { return null; }
+  }
+  function dvRender(reload) {
+    var t = T(), url = curUrl();
+    hideNote(); $('#err').hidden = true;
+    if (!url) { if (t.wv) { t.wv.remove(); t.wv = null; } showHome(); return; }
+    showFrame();
+    if (!t.wv) dvCreate(t, url);
+    else if (reload) t.wv.reload();
+    else if (t.wvReady && t.wv.getURL() !== url) t.wv.loadURL(url);
+    dvShow(t); updateBar(); setFab(countBig(t.items));
+  }
+  window.MG_pageUrl = function () { return curUrl(); };
+  window.MG_pageWcId = function () { var t = T(); try { return t.wv && t.wvReady ? t.wv.getWebContentsId() : 0; } catch (e) { return 0; } };
+
   function showHome() {
     $('#home').hidden = false; $('#frameBox').hidden = true; $('#err').hidden = true; hideNote();
+    if (NATIVE) dvAll().forEach(function (w) { w.style.display = 'none'; });
     $('#addr').value = ''; $('#lock').textContent = '⌕';
     renderHome(); updateBar(); setFab(0);
   }
@@ -127,6 +197,9 @@
     url = Grab.unwrap(url);
     if (!url) return;
     var t = T();
+    if (NATIVE) {
+      if (t.wv && t.wvReady && !opts.fromHist) { t.pending = ''; t.wv.loadURL(url); showFrame(); dvShow(t); return; }
+    }
     if (!opts.fromHist) {
       if (opts.replace && t.i >= 0) t.hist[t.i] = url;
       else { t.hist = t.hist.slice(0, t.i + 1); t.hist.push(url); t.i = t.hist.length - 1; }
@@ -135,6 +208,7 @@
   }
 
   async function render(reload) {
+    if (NATIVE) { dvRender(reload); return; }
     var t = T(), url = curUrl(), my = ++loadId;
     updateBar();
     if (!url) { showHome(); return; }
@@ -231,6 +305,7 @@
     else if (d.type === 'collected' && collectWait[d.id]) { collectWait[d.id](d.items || []); delete collectWait[d.id]; }
   });
   function collectLive() {
+    if (NATIVE) return dvScan(T()).then(function (l) { return l || []; });
     return new Promise(function (resolve) {
       if (!frame || !frame.contentWindow || (T().mode || S.mode) === 'direct') { resolve([]); return; }
       var id = Math.random().toString(36).slice(2);
@@ -261,8 +336,21 @@
   $('#addrForm').addEventListener('submit', function (e) { e.preventDefault(); var u = toUrl($('#addr').value); $('#addr').blur(); if (u) navigate(u); });
   $('#addr').addEventListener('focus', function () { var u = curUrl(); if (u) this.value = u; this.select(); });
   $('#addr').addEventListener('blur', function () { setTimeout(updateBar, 100); });
-  $('#bBack').addEventListener('click', function () { var t = T(); if (t.i >= 0) { t.i--; saveTabs(); render(); } });
-  $('#bFwd').addEventListener('click', function () { var t = T(); if (t.i < t.hist.length - 1) { t.i++; saveTabs(); render(); } });
+  function goBack() {
+    var t = T();
+    if (NATIVE && t.wv && t.wvReady) {
+      if (t.i > 0) { t.pending = 'back'; t.wv.loadURL(t.hist[t.i - 1]); return; }   // переход сам сдвинет историю вкладки
+      t.i = -1; t.hist = []; t.wv.remove(); t.wv = null; saveTabs(); render(); return;
+    }
+    if (t.i >= 0) { t.i--; saveTabs(); render(); }
+  }
+  function goFwd() {
+    var t = T();
+    if (NATIVE && t.wv && t.wvReady) { if (t.i < t.hist.length - 1) { t.pending = 'fwd'; t.wv.loadURL(t.hist[t.i + 1]); } return; }
+    if (t.i < t.hist.length - 1) { t.i++; saveTabs(); render(); }
+  }
+  $('#bBack').addEventListener('click', goBack);
+  $('#bFwd').addEventListener('click', goFwd);
   $('#bReload').addEventListener('click', function () { render(true); });
   $('#bStar').addEventListener('click', function () {
     var u = curUrl(); if (!u) return;
@@ -273,7 +361,7 @@
   $('#errRetry').addEventListener('click', function () { render(true); });
   // «Открыть напрямую» — только для этой страницы, режим вкладки не меняется
   $('#errDirect').addEventListener('click', function () { T().once = curUrl(); render(); });
-  $('#errChrome').addEventListener('click', function () { window.open(curUrl(), '_blank', 'noopener'); });
+  $('#errChrome').addEventListener('click', function () { if (NATIVE) NATIVE.openExternal(curUrl()); else window.open(curUrl(), '_blank', 'noopener'); });
 
   // вкладки
   function renderTabs() {
@@ -287,7 +375,7 @@
   $('#tabList').addEventListener('click', function (e) {
     var c = e.target.closest('[data-tclose]');
     if (c) {
-      var i = +c.dataset.tclose; tabs.splice(i, 1);
+      var i = +c.dataset.tclose; if (tabs[i] && tabs[i].wv) tabs[i].wv.remove(); tabs.splice(i, 1);
       if (!tabs.length) tabs.push(newTabObj());
       if (cur >= tabs.length) cur = tabs.length - 1; else if (i < cur) cur--;
       saveTabs(); renderTabs(); render(); return;
@@ -309,9 +397,9 @@
     var b = e.target.closest('[data-act]'); if (!b) return;
     var a = b.dataset.act, u = curUrl(); closeSheet('menu');
     if (a === 'newtab') { tabs.push(newTabObj()); cur = tabs.length - 1; saveTabs(); render(); }
-    else if (a === 'home') { var t = T(); t.hist = t.hist.slice(0, t.i + 1); t.i = -1; t.hist = []; t.title = ''; saveTabs(); render(); }
+    else if (a === 'home') { var t = T(); t.hist = t.hist.slice(0, t.i + 1); t.i = -1; t.hist = []; t.title = ''; if (t.wv) { t.wv.remove(); t.wv = null; } saveTabs(); render(); }
     else if (a === 'pageshot') { if (!u) { toast('Сначала откройте сайт'); return; } openPicker({ pageShot: true }); }
-    else if (a === 'chrome') { if (u) window.open(u, '_blank', 'noopener'); }
+    else if (a === 'chrome') { if (u) { if (NATIVE) NATIVE.openExternal(u); else window.open(u, '_blank', 'noopener'); } }
     else if (a === 'copy') { if (u) (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(function () { toast('Адрес скопирован'); }, function () { prompt('Адрес:', u); }); }
     else if (a === 'settings') openSettings();
   });
@@ -329,6 +417,7 @@
     $('#pkTitle').textContent = 'Ищу картинки…'; $('#pkSub').textContent = host(u);
     $('#pkGrid').innerHTML = ''; $('#pkEmpty').hidden = true; $('#pkChips').innerHTML = '';
     openSheet('picker');
+    if (!t.items && NATIVE) t.items = (await dvScan(t)) || [];
     if (!t.items) { try { var r = await getPage(u); if (r.html) t.items = Grab.extract(r.html, r.url).items; else t.items = [{ url: u, kind: 'img', ext: Grab.extOf(u) }]; } catch (e) { t.items = Grab.extOf(u) ? [{ url: u, kind: 'img', ext: Grab.extOf(u) }] : []; } }
     var live = await collectLive();
     var map = {}, list = [];
@@ -376,7 +465,18 @@
     $$('#pkGrid img').forEach(function (img) {
       var it = byUrl(img.parentNode.dataset.u);
       img.onload = function () { it.loaded = true; it.nw = img.naturalWidth; it.nh = img.naturalHeight; var d = img.parentNode.querySelector('.dm'); if (d) d.textContent = it.nw + '×' + it.nh; if (first && $('#pkSmall').checked && isSmall(it)) { delete P.sel[it.url]; img.parentNode.remove(); updCount(); } };
-      img.onerror = function () { it.failed = true; img.parentNode.classList.add('bad'); };
+      img.onerror = function () {
+        // в программе: миниатюры с защитой от чужих ссылок подгружаем сами, с адресом страницы
+        if (NATIVE && !it.thumbTried && /^https?:/.test(it.url)) {
+          it.thumbTried = true;
+          NATIVE.fetch(it.url, curUrl()).then(function (r) {
+            if (r && r.ok && r.body && r.body.length > 24) { var t0 = Grab.sniff(r.body); if (t0) { img.src = URL.createObjectURL(new Blob([r.body], { type: t0.mime })); return; } }
+            it.failed = true; img.parentNode.classList.add('bad');
+          }, function () { it.failed = true; img.parentNode.classList.add('bad'); });
+          return;
+        }
+        it.failed = true; img.parentNode.classList.add('bad');
+      };
       if (img.complete && !img.naturalWidth) img.onerror(); else if (img.complete && img.naturalWidth) img.onload();
     });
     updCount();
@@ -489,6 +589,11 @@
     $('#svName').value = name;
     $('#svSub').textContent = fmtSize(z.blob.size);
     $('#svSum').innerHTML = '<span class="ok">✓ Фото: ' + z.ok + '</span>' + (z.shots ? '<span class="shot">📷 Скриншоты: ' + z.shots + '</span>' : '') + (z.fails ? '<span class="bad">✕ Не удалось: ' + z.fails + '</span>' : '');
+    if (NATIVE) {
+      $('#svPick').hidden = false; $('#svPick').textContent = '💾 Сохранить как… (выбрать папку и имя)'; $('#svShare').hidden = true;
+      $('#svDl').textContent = '⬇ В папку «Загрузки»'; $('#svHint').textContent = 'Можно сохранить несколько раз в разные места.';
+      openSheet('save'); return;
+    }
     var canPick = 'showSaveFilePicker' in window;
     var canShare = false; try { canShare = !!(navigator.canShare && navigator.canShare({ files: [new File([new Blob(['x'])], 'a.zip', { type: 'application/zip' })] })); } catch (e) {}
     $('#svPick').hidden = !canPick; $('#svShare').hidden = !canShare;
@@ -498,6 +603,10 @@
   }
   function zipName() { var n = $('#svName').value.trim() || 'Мое_граббер.zip'; n = n.replace(/[\\/:*?"<>|]+/g, '_'); return /\.zip$/i.test(n) ? n : n + '.zip'; }
   $('#svPick').addEventListener('click', async function () {
+    if (NATIVE) {
+      var p = await NATIVE.saveAs(zipName(), new Uint8Array(await lastZip.blob.arrayBuffer()));
+      if (p) toast('Сохранено: ' + p, true); return;
+    }
     try {
       var h = await window.showSaveFilePicker({ suggestedName: zipName(), types: [{ description: 'ZIP-архив', accept: { 'application/zip': ['.zip'] } }] });
       var w = await h.createWritable(); await w.write(lastZip.blob); await w.close();
@@ -509,7 +618,8 @@
     catch (e) { if (e.name !== 'AbortError') toast('Не удалось открыть «Поделиться»: ' + (e.message || e.name)); }
   });
   $('#svDl').addEventListener('click', download);
-  function download() {
+  async function download() {
+    if (NATIVE) { var p = await NATIVE.saveDownloads(zipName(), new Uint8Array(await lastZip.blob.arrayBuffer())); toast('Сохранено в «Загрузки»: ' + p, true); return; }
     var url = URL.createObjectURL(lastZip.blob), a = document.createElement('a');
     a.href = url; a.download = zipName(); document.body.appendChild(a); a.click(); a.remove();
     setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
@@ -591,5 +701,17 @@
     render();
   })();
 
+  if (NATIVE) {
+    NATIVE.on('open-tab', function (url) { tabs.push(newTabObj()); cur = tabs.length - 1; saveTabs(); navigate(url); });
+    NATIVE.on('ctx', function (d) { openPicker({ only: d.url, alt: d.alt }); });
+    NATIVE.on('key', function (k) {
+      if (k === 'reload') render(true);
+      else if (k === 'address') { $('#addr').focus(); }
+      else if (k === 'newtab') { tabs.push(newTabObj()); cur = tabs.length - 1; saveTabs(); render(); setTimeout(function () { $('#homeQ').focus(); }, 100); }
+      else if (k === 'closetab') { var t = T(); if (t.wv) t.wv.remove(); tabs.splice(cur, 1); if (!tabs.length) tabs.push(newTabObj()); if (cur >= tabs.length) cur = tabs.length - 1; saveTabs(); render(); }
+      else if (k === 'back') goBack(); else if (k === 'forward') goFwd();
+      else if (k === 'picker') openPicker();
+    });
+  }
   window.MG = { version: VERSION, navigate: navigate, openPicker: openPicker, state: function () { return { tabs: tabs, cur: cur, P: P, S: S }; } };
 })();

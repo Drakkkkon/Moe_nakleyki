@@ -13,7 +13,7 @@
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<!-- Мое_граббер 1.3.0 -->
+<!-- Мое_граббер 1.4.0 -->
 <header class="bar">
   <button class="ib" id="bBack" title="Назад" aria-label="Назад">‹</button>
   <button class="ib" id="bFwd" title="Вперёд" aria-label="Вперёд">›</button>
@@ -50,9 +50,9 @@
     <p id="errText"></p>
     <div class="row">
       <button class="btn pri" id="errRetry">Повторить</button>
-      <button class="btn" id="errDirect">Открыть напрямую (один раз)</button>
+      <button class="btn web-only" id="errDirect">Открыть напрямую (один раз)</button>
       <button class="btn" id="errChrome">В Chrome ↗</button>
-      <button class="btn" id="errDiag">🩺 Диагностика</button>
+      <button class="btn web-only" id="errDiag">🩺 Диагностика</button>
     </div>
     <p class="hint">Даже если страница не показалась, кнопка «Фото» всё равно может найти картинки — или вставьте прямую ссылку на фото.</p>
   </section>
@@ -140,25 +140,25 @@
       <button class="mi" data-act="copy"><span>⧉</span>Копировать адрес</button>
       <button class="mi" data-act="settings"><span>⚙</span>Настройки</button>
     </div>
-    <p class="cap">Как показывать сайт (эта вкладка):</p>
-    <div class="seg" id="modeSeg">
+    <p class="cap web-only">Как показывать сайт (эта вкладка):</p>
+    <div class="seg web-only" id="modeSeg">
       <button data-mode="fast">Быстро<small>без скриптов</small></button>
       <button data-mode="full">Полностью<small>со скриптами сайта</small></button>
       <button data-mode="direct">Напрямую<small>как в Chrome</small></button>
     </div>
-    <p class="hint" id="modeHint"></p>
+    <p class="hint web-only" id="modeHint"></p>
   </div>
 </div>
 
 <!-- ===== Настройки ===== -->
 <div class="sheet full" id="settings" hidden>
-  <div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>Настройки</b><small>Мое_граббер 1.3.0</small></div></div>
+  <div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>Настройки</b><small>Мое_граббер 1.4.0</small></div></div>
   <div class="pad scroll">
-    <div class="card"><h3>Аккаунт</h3><div id="acctBox"></div></div>
+    <div class="card web-only"><h3>Аккаунт</h3><div id="acctBox"></div></div>
 
     <div class="card">
       <h3>Браузер</h3>
-      <label class="fld"><span>Как показывать сайты</span>
+      <label class="fld web-only"><span>Как показывать сайты</span>
         <select id="stMode"><option value="fast">Быстро, без скриптов сайта</option><option value="full">Полностью, со скриптами сайта</option><option value="direct">Напрямую (как в Chrome)</option></select></label>
       <label class="fld"><span>Поиск</span>
         <select id="stSearch"><option value="google">Google</option><option value="bing">Bing</option><option value="ddg">DuckDuckGo</option><option value="yandex">Яндекс</option></select></label>
@@ -175,7 +175,7 @@
       <label class="fld"><span>Скачивать одновременно</span><select id="stConc"><option>2</option><option>3</option><option>4</option><option>6</option></select></label>
     </div>
 
-    <div class="card">
+    <div class="card web-only">
       <h3>Прокси</h3>
       <p class="cap">Через них открываются чужие сайты и фото, сверху вниз по очереди. Одна строка — один прокси, вместо адреса пишется <code>{u}</code>. Бесплатные общие прокси бывают перегружены — надёжнее всего свой: <a href="#" id="cfHelpLink">как сделать за 5 минут</a>.</p>
       <textarea id="stProxies" rows="4" spellcheck="false"></textarea>
@@ -186,6 +186,10 @@
     <!-- Инструкции и ссылки — всегда внизу и свёрнуты -->
     <details class="card help">
       <summary>Инструкции и ссылки</summary>
+      <details class="native-only"><summary>Программа для Windows</summary>
+        <p>В программе внутри настоящий Chrome: сайты открываются как обычно, прокси не нужны, фото скачиваются напрямую, скриншоты делает сама программа. Правый клик по картинке → «Скачать эту картинку…».</p>
+        <p>Клавиши: Ctrl+T — новая вкладка, Ctrl+W — закрыть, Ctrl+L — адресная строка, F5 — обновить, Alt+← / Alt+→ — назад/вперёд.</p>
+        <p>Новые версии: <a href="https://drakkkkon.github.io/maymani/grabber.html" target="_blank" rel="noopener">Мое_сайты → Мое_граббер</a>.</p></details>
       <details><summary>Как скачать фото</summary>
         <ol><li>Наберите адрес сайта или запрос в строке сверху (кнопка «Картинки» на главной ищет сразу фото).</li>
         <li>Нажмите круглую кнопку «Фото» внизу справа — откроется список всех картинок страницы.</li>
@@ -206,7 +210,7 @@
       <details><summary>Почему сайт открылся не так или пусто</summary>
         <p>«Быстро» показывает страницу без её скриптов: это быстро и надёжно, но сайты-приложения (Instagram, Pinterest и т. п.) могут быть пустыми. Тогда в меню ⋮ выберите «Полностью» или «Напрямую». В режиме «Напрямую» часть сайтов запрещает показ внутри другого сайта — откройте их в Chrome, скопируйте адрес нужного фото и вставьте сюда.</p>
         <p>Если не открывается ничего — проверьте прокси в настройках («Проверить»).</p></details>
-      <details id="cfHelp"><summary>Свой прокси на Cloudflare (бесплатно, самый надёжный)</summary>
+      <details id="cfHelp" class="web-only"><summary>Свой прокси на Cloudflare (бесплатно, самый надёжный)</summary>
         <p>Общие бесплатные прокси работают со сбоями: лимиты, блокировки по IP, закрытия. Свой прокси на Cloudflare бесплатен (до 100 000 запросов в день) и работает только для вашего граббера.</p>
         <ol>
           <li>Откройте <a href="https://dash.cloudflare.com/sign-up" target="_blank" rel="noopener">dash.cloudflare.com</a> и зарегистрируйтесь (почта и пароль).</li>
@@ -263,14 +267,15 @@ export default {
 
 <script src="js/zip.js"></script>
 <script src="js/grab.js"></script>
+<script src="js/desktop.js"></script>
 <script src="js/app.js"></script>
 <script src="js/mm-account.js"></script>
 <script>
   /* Общий аккаунт: настройки, закладки и история — в облаке */
-  MMAccount.setup({ app: "grabber", title: "Мое_граббер", mount: "#acctBox",
+  if (!window.MGNative) MMAccount.setup({ app: "grabber", title: "Мое_граббер", mount: "#acctBox",
     ls: ["mg_settings", "mg_bookmarks", "mg_history"],
     note: "Скачанные архивы в облако не уходят — только настройки, закладки и история." });
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function () {});
+  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(function () {});
 </script>
 </body>
 </html>
