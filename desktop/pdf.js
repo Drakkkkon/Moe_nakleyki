@@ -74,7 +74,9 @@
     for (var i = 1; i < nums.length; i++) { if (nums[i] === nums[i - 1]) gaps.push('страница ' + nums[i] + ' повторяется'); else if (nums[i] !== nums[i - 1] + 1) gaps.push('нет ' + (nums[i - 1] + 1) + (nums[i] - nums[i - 1] > 2 ? '–' + (nums[i] - 1) : '')); }
     return { path: path, file: baseName(path), meta: meta, pages: pages, gaps: gaps, read: z.read, size: buf.length };
   }
+  var PCFG = Object.assign({ fit: '' }, I.jget('mg_pdf', {}));
   function pdfName(meta, merged) {
+    if (meta.plain) return (MG_META.safe(meta.title) || 'Фото') + '.pdf';
     var a = MG_META.safe((meta.author || '').split(/\s*[,;]\s*/).slice(0, 2).join(', ')), t = MG_META.safe(meta.title) || 'Комикс';
     var ch = merged ? (merged.length > 1 ? ' — Главы ' + merged[0] + '–' + merged[merged.length - 1] : '') : (meta.chapter ? ' — Глава ' + MG_META.safe(meta.chapter) : '');
     return (a || 'Неизвестный автор') + '_' + t + ch + '.pdf';
@@ -127,7 +129,7 @@
     var n = 5;
     groups.forEach(function (g) {
       g.images.forEach(function (im) {
-        var W = (im.w * 0.75).toFixed(2), H = (im.h * 0.75).toFixed(2), content = 'q ' + W + ' 0 0 ' + H + ' 0 0 cm /Im0 Do Q';
+        var W = im.pw.toFixed(2), H = im.ph.toFixed(2), content = 'q ' + im.dw.toFixed(2) + ' 0 0 ' + im.dh.toFixed(2) + ' ' + im.dx.toFixed(2) + ' ' + im.dy.toFixed(2) + ' cm /Im0 Do Q';
         obj(n, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + W + ' ' + H + '] /Resources << /XObject << /Im0 ' + (n + 2) + ' 0 R >> >> /Contents ' + (n + 1) + ' 0 R >>');
         obj(n + 1, '<< /Length ' + content.length + ' >>\nstream\n' + content + '\nendstream');
         obj(n + 2, function () {
@@ -153,32 +155,51 @@
       subject: (meta.desc || '').slice(0, 2000), keywords: [].concat(meta.genres || [], meta.tags || []).join(', ') };
   }
 
+  // Размер страниц. fit: '' — как есть; 'width' — все страницы одной ширины; 'page' — все страницы одного размера (картинка по центру).
+  // Сами картинки не пересжимаются: в PDF меняется только масштаб, в котором картинка положена на страницу.
+  function layout(groups, fit) {
+    var all = [], K = 0.75; groups.forEach(function (g) { g.images.forEach(function (im) { all.push(im); }); });
+    if (!all.length) return;
+    var W = Math.max.apply(null, all.map(function (im) { return im.w; })) * K;
+    var hs = all.map(function (im) { return W * im.h / im.w; }).sort(function (a, b) { return a - b; }), H = hs[Math.floor(hs.length / 2)];
+    all.forEach(function (im) {
+      if (fit === 'width') { im.pw = W; im.ph = W * im.h / im.w; im.dx = 0; im.dy = 0; im.dw = im.pw; im.dh = im.ph; }
+      else if (fit === 'page') { var sc = Math.min(W / im.w, H / im.h); im.dw = im.w * sc; im.dh = im.h * sc; im.pw = W; im.ph = H; im.dx = (W - im.dw) / 2; im.dy = (H - im.dh) / 2; }
+      else { im.pw = im.w * K; im.ph = im.h * K; im.dx = 0; im.dy = 0; im.dw = im.pw; im.dh = im.ph; }
+    });
+    var mx = Math.max.apply(null, all.map(function (im) { return Math.max(im.pw, im.ph); })), f = mx > 14400 ? 14400 / mx : 1;   // предел размера страницы PDF
+    if (f < 1) all.forEach(function (im) { ['pw', 'ph', 'dx', 'dy', 'dw', 'dh'].forEach(function (k) { im[k] *= f; }); });
+  }
+
   // Собрать один PDF из списка «глав» (каждая: { meta, pages: [имена], read })
-  async function makePdf(chapters, quality, onProg) {
+  async function makePdf(chapters, quality, onProg, fit) {
     var groups = [], done = 0, all = 0;
     chapters.forEach(function (c) { all += c.pages.length; });
     for (var i = 0; i < chapters.length; i++) {
       var c = chapters[i], imgs = [];
       for (var k = 0; k < c.pages.length; k++) {
         var data = await c.read(c.pages[k]);
-        try { imgs.push(await toJpeg(data, quality)); } catch (e) { throw new Error('не читается картинка ' + baseName(c.pages[k]) + ' в ' + c.file); }
+        try { imgs.push(await toJpeg(data instanceof Uint8Array ? data : new Uint8Array(data), quality)); } catch (e) { throw new Error('не читается картинка ' + baseName(c.pages[k]) + (c.photos ? '' : ' в ' + c.file)); }
         done++; if (onProg) onProg(done, all);
       }
-      groups.push({ title: c.meta.chapter ? 'Глава ' + c.meta.chapter + (c.meta.chapterTitle ? ': ' + c.meta.chapterTitle : '') : c.file, ch: c.meta.chapter, images: imgs });
+      groups.push({ title: c.meta.chapter ? 'Глава ' + c.meta.chapter + (c.meta.chapterTitle ? ': ' + c.meta.chapterTitle : '') : (c.photos ? c.meta.title : c.file), ch: c.meta.chapter, images: imgs });
     }
+    layout(groups, fit || '');
     return buildPdf(groups, infoOf(chapters[0].meta, groups));
   }
 
   // ---------- окно «PDF из ZIP» ----------
   var sh = document.createElement('div'); sh.className = 'sheet full'; sh.id = 'pdfSheet'; sh.hidden = true;
-  sh.innerHTML = '<div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>📄 PDF из ZIP</b><small>Одна картинка на страницу, страницы по номеру 1, 2, 3…</small></div></div>' +
+  sh.innerHTML = '<div class="sh-head"><button class="ib" data-close aria-label="Закрыть">✕</button><div class="sh-title"><b>📄 PDF из ZIP и фото</b><small>Одна картинка на страницу, страницы по номеру 1, 2, 3…</small></div></div>' +
     '<div class="pad scroll">' +
-      '<div class="row"><button class="btn pri" id="pdfPick">Выбрать ZIP-архивы…</button><button class="btn ghost" id="pdfClear">Очистить список</button></div>' +
+      '<div class="row"><button class="btn pri" id="pdfPick">Выбрать ZIP-архивы…</button><button class="btn pri" id="pdfPhotos">Выбрать фото (JPEG, PNG…)…</button><button class="btn ghost" id="pdfClear">Очистить список</button></div>' +
       '<div class="list" id="pdfList"></div>' +
       '<div class="card"><label class="pg-r"><input type="radio" name="pdfMode" value="each" checked> Отдельный PDF из каждого архива</label>' +
       '<label class="pg-r"><input type="radio" name="pdfMode" value="one"> Один PDF из всех архивов (по порядку списка, в оглавлении — главы)</label>' +
       '<label class="pg-r"><input type="radio" name="pdfWhere" value="near" checked> Сохранить рядом с архивом</label>' +
       '<label class="pg-r"><input type="radio" name="pdfWhere" value="ask"> Спросить, куда сохранить</label>' +
+      '<label class="fld"><span>Размер страниц</span><select id="pdfFit"><option value="">Как есть — у каждой страницы размер своей картинки</option><option value="width">Выровнять по ширине — все страницы одной ширины</option><option value="page">Одинаковые страницы — один размер, картинка по центру</option></select></label>' +
+      '<p class="hint">Выравнивание не пересжимает картинки: разрешение остаётся прежним, меняется только масштаб на странице.</p>' +
       '<label class="fld"><span>Качество для PNG/WEBP/GIF: <b id="pdfQv">92</b>% (JPEG вставляется без пересжатия)</span><input type="range" id="pdfQ" min="60" max="100" value="92"></label></div>' +
       '<button class="btn pri big" id="pdfGo" disabled>Собрать PDF</button>' +
       '<div class="pbar" id="pdfBarW" hidden><i id="pdfBar"></i></div><p class="hint" id="pdfState"></p><div class="list" id="pdfOut"></div>' +
@@ -188,16 +209,31 @@
   function drawList() {
     $('#pdfList').innerHTML = items.length ? items.map(function (a, i) {
       var m = a.meta;
+      if (a.photos) return '<div class="li pdf-it"><div class="go"><b>🖼 Фото: ' + a.pages.length + ' шт.</b><small>' + esc(dirName(a.path)) + ' · по порядку: ' + esc(baseName(a.pages[0])) + ' … ' + esc(baseName(a.pages[a.pages.length - 1])) + '</small><input class="pdf-nm" data-nm="' + i + '" value="' + esc(m.title) + '" placeholder="Название PDF"></div>' +
+        '<button class="ib x" data-up="' + i + '" title="Выше"' + (i ? '' : ' disabled') + '>↑</button><button class="ib x" data-dn="' + i + '" title="Ниже"' + (i < items.length - 1 ? '' : ' disabled') + '>↓</button><button class="ib x" data-rm="' + i + '" title="Убрать">✕</button></div>';
       return '<div class="li pdf-it"><div class="go"><b>' + esc((m.author ? m.author + ' — ' : '') + (m.title || a.file)) + (m.chapter ? ' · глава ' + esc(m.chapter) : '') + '</b><small>' + esc(a.file) + ' · ' + a.pages.length + ' стр. · ' + fmt(a.size) + (a.gaps.length ? ' · ⚠ ' + esc(a.gaps.slice(0, 3).join(', ')) : '') + '</small></div>' +
         '<button class="ib x" data-up="' + i + '" title="Выше"' + (i ? '' : ' disabled') + '>↑</button><button class="ib x" data-dn="' + i + '" title="Ниже"' + (i < items.length - 1 ? '' : ' disabled') + '>↓</button><button class="ib x" data-rm="' + i + '" title="Убрать">✕</button></div>';
-    }).join('') : '<p class="hint">Выберите один или несколько архивов ZIP/CBZ — например скачанные «Авто-листанием».</p>';
+    }).join('') : '<p class="hint">Выберите архивы ZIP/CBZ (например скачанные «Авто-листанием») или отдельные фото — JPEG, PNG, WEBP, GIF, AVIF, BMP.</p>';
     $('#pdfGo').disabled = !items.length;
-    $('#pdfGo').textContent = items.length > 1 && mode() === 'one' ? 'Собрать один PDF из ' + items.length + ' архивов' : items.length > 1 ? 'Собрать ' + items.length + ' PDF' : 'Собрать PDF';
+    $('#pdfGo').textContent = items.length > 1 && mode() === 'one' ? 'Собрать один PDF из всего списка (' + items.length + ')' : items.length > 1 ? 'Собрать ' + items.length + ' PDF' : 'Собрать PDF';
   }
   function mode() { var r = sh.querySelector('[name=pdfMode]:checked'); return r ? r.value : 'each'; }
   function where() { var r = sh.querySelector('[name=pdfWhere]:checked'); return r ? r.value : 'near'; }
   sh.addEventListener('change', function (e) { if (e.target.name === 'pdfMode') drawList(); });
   $('#pdfQ').oninput = function () { $('#pdfQv').textContent = this.value; };
+  $('#pdfFit').value = PCFG.fit || '';
+  $('#pdfFit').onchange = function () { PCFG.fit = this.value; try { localStorage.setItem('mg_pdf', JSON.stringify(PCFG)); } catch (e) {} };
+  function fit() { return $('#pdfFit').value; }
+  // отдельные фото → PDF: порядок по номеру в имени файла, затем по имени
+  function addPhotos(paths) {
+    if (!paths || !paths.length) return;
+    var list = paths.slice().sort(function (a, b) { var x = numKey(a), y = numKey(b); return x !== y ? x - y : natural(baseName(a), baseName(b)); });
+    var folder = baseName(dirName(list[0])) || 'Фото';
+    items.push({ photos: true, path: list[0], file: 'Фото', meta: { title: list.length === 1 ? baseName(list[0]).replace(/\.[a-z0-9]+$/i, '') : folder, plain: true }, pages: list, gaps: [], size: 0, read: function (p) { return N.readFile(p); } });
+    drawList();
+  }
+  $('#pdfPhotos').onclick = async function () { addPhotos(await N.pickFiles({ title: 'Фото для PDF', filters: [{ name: 'Фото', extensions: ['jpg', 'jpeg', 'jfif', 'png', 'webp', 'gif', 'avif', 'bmp'] }] })); };
+  $('#pdfList').addEventListener('input', function (e) { var n = e.target.closest('[data-nm]'); if (n && items[+n.dataset.nm]) items[+n.dataset.nm].meta.title = n.value; });
   async function addPaths(paths) {
     for (var i = 0; i < paths.length; i++) {
       if (items.some(function (x) { return x.path === paths[i]; })) continue;
@@ -235,14 +271,14 @@
     function prog(d, t, label) { $('#pdfBar').style.width = Math.round(d / t * 100) + '%'; $('#pdfState').textContent = label + ' — страница ' + d + ' из ' + t; }
     try {
       if (mode() === 'one' && items.length > 1) {
-        var pdf = await makePdf(items, q, function (d, t) { prog(d, t, 'Собираю один PDF'); });
+        var pdf = await makePdf(items, q, function (d, t) { prog(d, t, 'Собираю один PDF'); }, fit());
         var chs = items.map(function (a) { return a.meta.chapter; }).filter(Boolean);
         var p = await savePdf(pdf, pdfName(items[0].meta, chs.length ? chs : [1, items.length]), dirName(items[0].path));
         if (p) outLine(p, pdf.length, items.reduce(function (s, a) { return s + a.pages.length; }, 0));
       } else {
         for (var i = 0; i < items.length; i++) {
           var a = items[i];
-          var pdf1 = await makePdf([a], q, function (d, t) { prog(d, t, (items.length > 1 ? (i + 1) + ' из ' + items.length + ': ' : '') + a.file); });
+          var pdf1 = await makePdf([a], q, function (d, t) { prog(d, t, (items.length > 1 ? (i + 1) + ' из ' + items.length + ': ' : '') + (a.photos ? a.meta.title : a.file)); }, fit());
           var p1 = await savePdf(pdf1, pdfName(a.meta), dirName(a.path));
           if (p1) outLine(p1, pdf1.length, a.pages.length);
         }
@@ -258,7 +294,7 @@
   async function pagesToPdf(pages, meta, dir, ask) {
     var list = pages.slice().sort(function (a, b) { var x = numKey(a.name), y = numKey(b.name); return x !== y ? x - y : natural(a.name, b.name); });
     var map = {}; list.forEach(function (p) { map[p.name] = p.bytes; });
-    var pdf = await makePdf([{ meta: meta || {}, file: '', pages: list.map(function (p) { return p.name; }), read: async function (n) { return map[n]; } }], 0.92);
+    var pdf = await makePdf([{ meta: meta || {}, file: '', pages: list.map(function (p) { return p.name; }), read: async function (n) { return map[n]; } }], 0.92, null, PCFG.fit);
     var name = pdfName(meta || {});
     var p = ask ? await N.savePdfAs(name, pdf, dir) : await N.writeFile(dir, name, pdf);
     return p ? { path: p, size: pdf.length, pages: list.length } : null;
@@ -292,5 +328,5 @@
       b.disabled = false; b.textContent = '📄 Сделать PDF из этих фото';
     };
   }
-  window.MG_pdf = { open: openPdf, readArchive: readArchive, makePdf: makePdf, pagesToPdf: pagesToPdf, zipBlobToPdf: zipBlobToPdf, buildPdf: buildPdf, numKey: numKey };
+  window.MG_pdf = { addPhotos: addPhotos, open: openPdf, readArchive: readArchive, makePdf: makePdf, pagesToPdf: pagesToPdf, zipBlobToPdf: zipBlobToPdf, buildPdf: buildPdf, numKey: numKey };
 })();

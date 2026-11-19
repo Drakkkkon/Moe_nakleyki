@@ -119,3 +119,4 @@
 #pdfOut .li .go { flex: 1; min-width: 0; padding: 8px 12px; display: flex; flex-direction: column; }
 #pdfOut .li .btn { min-height: 32px; padding: 4px 10px; }
 #pdfSheet .card .pg-r { margin: 6px 0; }
+.pdf-nm { margin-top: 4px; min-height: 30px; border: 1px solid var(--ln); border-radius: 8px; padding: 2px 8px; background: var(--sf); color: var(--tx); font-size: 13px; }

@@ -166,17 +166,33 @@ ipcMain.handle('shot', async (e, url, fullPage) => {
 // Скриншот всей открытой страницы вкладки (через протокол отладки — вместе с невидимой частью)
 ipcMain.handle('page-shot', async (e, wcId) => {
   const wc = webContents.fromId(wcId); if (!wc) return null;
-  const dbg = wc.debugger;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const js = (x) => wc.executeJavaScript(x, true);
+  // 1.10.0: снимок всей страницы — прокрутка на высоту экрана, снимок видимой части, склейка по точным отступам.
+  // Закреплённые шапки и кнопки остаются только на первом куске.
   try {
-    dbg.attach('1.3');
-    const m = await dbg.sendCommand('Page.getLayoutMetrics');
-    const cs = m.cssContentSize || m.contentSize;
-    const width = Math.ceil(Math.min(cs.width, 4000)), height = Math.ceil(Math.min(cs.height, 16000));
-    const r = await dbg.sendCommand('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width, height, scale: 1 } });
-    return Buffer.from(r.data, 'base64');
+    const M = await js(`(() => { var el = document.scrollingElement || document.documentElement;
+      return { vh: innerHeight, vw: document.documentElement.clientWidth || innerWidth, H: Math.max(el.scrollHeight, document.body ? document.body.scrollHeight : 0), dpr: devicePixelRatio || 1 }; })()`);
+    const MAX = 120000, H = Math.min(M.H, MAX), parts = [];
+    let y = 0, first = true;
+    while (true) {
+      const got = await js(`(() => { window.scrollTo(0, ${y}); return Math.round(window.scrollY); })()`);
+      await sleep(first ? 350 : 250);
+      const im = await wc.capturePage({ x: 0, y: 0, width: M.vw, height: M.vh });
+      if (im.isEmpty()) break;
+      const sz = im.getSize(), k = sz.height / M.vh;            // пикселей снимка на пиксель страницы
+      parts.push({ png: im.toPNG(), top: got, k });
+      if (first) { first = false; await js(`(() => { var st = document.createElement('style'); st.id = '__mg_fix'; st.textContent = '[data-mg-hide]{visibility:hidden!important}'; document.documentElement.appendChild(st);
+        document.querySelectorAll('body *').forEach(function (e) { var p = getComputedStyle(e).position; if (p === 'fixed' || p === 'sticky') e.setAttribute('data-mg-hide', ''); }); return 1; })()`); }
+      if (got + M.vh >= H || parts.length > 400) break;
+      y = got + M.vh;
+    }
+    return { tiles: parts.map(p => ({ png: p.png, top: p.top, k: p.k })), vh: M.vh, width: M.vw, height: H, cut: M.H > MAX };
   } catch (err) {
-    try { const im = await wc.capturePage(); return im.isEmpty() ? null : im.toPNG(); } catch (e2) { return null; }
-  } finally { try { dbg.detach(); } catch (e3) {} }
+    try { const im = await wc.capturePage(); return im.isEmpty() ? null : { parts: [im.toPNG()] }; } catch (e2) { return null; }
+  } finally {
+    try { await js(`(() => { var st = document.getElementById('__mg_fix'); if (st) st.remove(); document.querySelectorAll('[data-mg-hide]').forEach(function (e) { e.removeAttribute('data-mg-hide'); }); window.scrollTo(0, 0); return 1; })()`); } catch (e4) {}
+  }
 });
 
 // ---------- сохранение ----------
